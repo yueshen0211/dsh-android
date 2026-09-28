@@ -122,23 +122,35 @@
 - id: hmr
   disabled: !!js process.platform === 'android'
 
-# ── 4. Desktop integrations with no mobile equivalent ────────────────────────
-# Directory picker: `dsh-host-directory-picker-auto` resolves a dual-face picker
-# against bind host and SSH state; its `-native` face goes through
-# @deepseek-ai/dsh-native-command (desktop OS dialogs). On a phone the workspace
-# is fixed to app-private storage and file exchange happens through the shell's
-# import/export Intents, so M1 pins the `-browse` face instead. Left mounted
-# until then so the tree stays closer to upstream.
+# ── 5. Directory picker: use the browse backend, not the native chooser ──────
+# `dsh-host-directory-picker-auto` resolves between a native OS chooser and the
+# server-side browse primitives. Its native backend drives exactly darwin, win32
+# and linux (zenity/kdialog), and on a loopback bind it would still pick native
+# where it can -- so on Android it either resolves wrong or, when the row was
+# simply disabled, removed the `directoryPicker` service entirely:
 #
-# `open-in-app` resolves host applications from the desktop registry; on Android
-# "open with another app" is an Intent the native shell owns.
+#   @deepseek-ai/dsh-api-workspace-controller: pending (waiting for service: directoryPicker)
+#
+# and the workspace surface cannot open at all.
+#
+# `dsh-host-directory-picker-browse` is the right backend here: it lists
+# directories with node:fs and has no native dependency and no OS dialog. The
+# service name is what matters (DirectoryPicker registers `directoryPicker`), and
+# the Web UI drives it over the same RPC either way.
 - id: directory-picker
   disabled: !!js process.platform === 'android'
 
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+
+# ── 6. Desktop integrations with no mobile equivalent ────────────────────────
+# `open-in-app` resolves host applications from the desktop registry; on Android
+# "open with another app" is an Intent the native shell owns.
 - id: open-in-app
   disabled: !!js process.platform === 'android'
 
-# ── 5. Rows deliberately NOT touched ─────────────────────────────────────────
+# ── 7. Rows deliberately NOT touched ─────────────────────────────────────────
 # - `tool-bash` / `tool-pwsh` / `bash-sandbox` / `pwsh-sandbox`: the base layer
 #   already splits these on `process.platform`, and on Android that resolves to
 #   bash-on / pwsh-off, which is the correct mobile outcome. Overriding them
