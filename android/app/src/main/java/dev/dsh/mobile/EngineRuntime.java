@@ -63,6 +63,15 @@ final class EngineRuntime {
      */
     private static final String VERSION_MARKER = "ENGINE-VERSION";
     /**
+     * Directory of Android support modules inside the engine tree, holding the
+     * filesystem-correction preload the engine is started with. It lives under
+     * node_modules because it requires `koffi` and resolves `@deepseek-ai/*`, and
+     * Node only walks up through directories named node_modules. It is not a
+     * package the engine resolves by name: it is passed to Node as an absolute
+     * `--import` path.
+     */
+    private static final String ANDROID_SUPPORT_DIR = "node_modules/android-support";
+    /**
      * The Android profile overlay, shipped as an asset and handed to the engine
      * as an absolute `--patch` path. It carries every platform difference
      * (permission policy pair, disabled desktop-only rows), which is what keeps
@@ -305,6 +314,25 @@ final class EngineRuntime {
         // HMR itself is inert here; it exists to reload client plugin bundles
         // when `pnpm run dev:web` rebuilds them, which never happens on device.
         command.add("--expose-internals");
+
+        // Android corrections that cannot be expressed as profile config, applied
+        // as a preload. A preload is required rather than optional: the engine
+        // gets several POSIX calls the platform refuses or reinterprets, and an
+        // ESM named import from a builtin is a snapshot, not a live binding, so
+        // patching `node:fs/promises` from user code cannot reach the consumer.
+        // The hook rewrites the one module that needs it as it loads.
+        //
+        // Currently: link(2) -> renameat2(RENAME_NOREPLACE), because Android
+        // refuses hardlinks in app storage (EACCES) and the session store uses
+        // link() as its atomic, no-clobber publish. See
+        // android/support/android-fs/ for the full statement.
+        File fsHook = new File(new File(paths.engineDir, ANDROID_SUPPORT_DIR),
+                "android-fs/register.mjs");
+        if (fsHook.isFile()) {
+            command.add("--import");
+            command.add(fsHook.getAbsolutePath());
+        }
+
         command.add(engineEntry.getAbsolutePath());
         command.add("--profile");
         command.add("web");

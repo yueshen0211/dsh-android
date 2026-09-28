@@ -139,6 +139,40 @@ function Expand-DebFlat {
     }
 }
 
+# Map a package name to its directory under a node_modules root.
+#
+# Scoped packages live one level deeper (`@scope/name`), and getting that wrong
+# fails in a confusing way: the package is simply never resolvable at runtime, so
+# the failure looks like a missing dependency rather than a staging mistake.
+function Get-NodeModulesPath {
+    param(
+        [Parameter(Mandatory)] [string] $ModulesRoot,
+        [Parameter(Mandatory)] [string] $PackageName
+    )
+    # Split with a count so only the FIRST slash separates scope from name; a
+    # name can never contain another.
+    $parts = $PackageName.Split('/', 2)
+    if ($PackageName.StartsWith('@') -and $parts.Count -eq 2) {
+        return Join-Path (Join-Path $ModulesRoot $parts[0]) $parts[1]
+    }
+    return Join-Path $ModulesRoot $PackageName
+}
+
+# Read the package name a staged stand-in declares for itself.
+#
+# The DECLARED name, not the folder name, is what decides where it installs: the
+# folder under android/shims is a flat label for humans, so a scoped upstream
+# package (whose consumer imports `@scope/name`) does not need a scoped folder on
+# disk. Returns $null when the target has no package.json.
+function Get-OwnPackageName {
+    param([Parameter(Mandatory)] [string] $PackageDir)
+    $manifest = Join-Path $PackageDir 'package.json'
+    if (-not (Test-Path $manifest)) { return $null }
+    $json = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+    if (-not $json.name) { return $null }
+    return [string] $json.name
+}
+
 # Look up a Termux package's Filename by exact package name.
 function Get-TermuxPackageFile {
     param(

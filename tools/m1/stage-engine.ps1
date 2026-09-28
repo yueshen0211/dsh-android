@@ -131,25 +131,42 @@ if (Test-Path $pluginSource) {
 }
 
 # --- replace native-only modules with Android stand-ins ----------------------
-# node-pty is a native addon with no android-arm64 prebuild, and
-# `dsh-subprocess-local` imports it statically, so on Android the import failure
-# aborts the entire plugin tree:
+# Two packages in the tree reach for a native binding that has no Android build.
+# Neither failure is survivable by configuration, because in both cases the
+# import is static and the plugin tree loads every row eagerly, so a failed
+# import aborts the whole boot:
 #
-#   Failed to load native module: pty.node, checked: build/Release,
-#   build/Debug, prebuilds/android-arm64
+#   node-pty            `dsh-subprocess-local` imports it statically.
+#                       Failed to load native module: pty.node, checked:
+#                       build/Release, build/Debug, prebuilds/android-arm64
 #
-# The shim keeps that import loadable. See android/shims/node-pty/index.js for
-# exactly what it does and does not provide.
+#   node-addon-system   `dsh-session-persistence-jsonl` imports `./flock`
+#                       statically, and upstream's entry refuses Android by
+#                       platform before reaching the kernel. The lock is a
+#                       required step of creating a session, so this breaks every
+#                       run, not a degraded feature:
+#                         flock is not supported on android-arm64
+#
+# See android/shims/node-pty/index.js and android/shims/node-addon-system/lib/flock.js
+# for exactly what each stand-in does and does not provide.
 $shimsSource = Join-Path $script:M1Workspace 'android\shims'
 if (Test-Path $shimsSource) {
     Get-ChildItem $shimsSource -Directory | ForEach-Object {
-        $target = Join-Path $modules $_.Name
+        # Install at the path the shim's DECLARED package name implies, not at its
+        # folder name. The folder under android/shims is a flat label for humans,
+        # so a scoped upstream package can be replaced without needing a scoped
+        # folder on disk -- and a mismatch here would silently leave the original
+        # package in place, which is a failure that only shows up at runtime.
+        $declared = Get-OwnPackageName $_.FullName
+        if (-not $declared) { throw "shim $($_.Name) has no package.json name; cannot resolve its install path" }
+        $target = Get-NodeModulesPath $modules $declared
         if (Test-Path $target) {
-            Write-Host "replacing node_modules/$($_.Name) with the Android shim"
+            Write-Host "replacing node_modules/$declared with the Android shim ($($_.Name))"
             Remove-Item $target -Recurse -Force
         } else {
-            Write-Host "adding node_modules/$($_.Name) from the Android shim"
+            Write-Host "adding node_modules/$declared from the Android shim ($($_.Name))"
         }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item $_.FullName $target -Recurse -Force
     }
 }
@@ -244,6 +261,35 @@ $profileDest = Join-Path $assetsDir 'android.patch.yml'
 Copy-Item $profileSource $profileDest -Force
 Write-Host "staged profile: android.patch.yml"
 
+# --- Android support modules (preloads the engine is started with) -----------
+# Not profile config: these are Node-level corrections the loader cannot express,
+# because an ESM named import from a builtin is a snapshot rather than a live
+# binding, so the consumer has to be transformed as it loads.
+#
+# Staged INSIDE node_modules on purpose. These modules require `koffi` and resolve
+# `@deepseek-ai/*`, and Node's ESM/CJS resolution only walks up through
+# directories literally named node_modules -- so anywhere else in the tree would
+# leave them unable to resolve their own dependencies. The directory is a plain
+# folder, not a package the engine resolves by name: it is handed to Node as an
+# absolute --import path (see EngineRuntime).
+$supportSource = Join-Path $script:M1Workspace 'android\support'
+$supportDest = Join-Path $nodeModulesDest 'android-support'
+if (Test-Path $supportSource) {
+    if (Test-Path $supportDest) { Remove-Item $supportDest -Recurse -Force }
+    & robocopy $supportSource $supportDest /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy of android/support failed ($LASTEXITCODE)" }
+    $stagedSupport = @(Get-ChildItem $supportDest -Recurse -File)
+    Write-Host "staged android-support: $($stagedSupport.Count) file(s)"
+    # The entry point EngineRuntime passes to --import must exist, or the engine
+    # silently starts without the corrections.
+    foreach ($required in @('android-fs\register.mjs', 'android-fs\link.js')) {
+        if (-not (Test-Path (Join-Path $supportDest $required))) {
+            throw "android support incomplete: missing $required"
+        }
+    }
+    Write-Host "  ok  android-fs/register.mjs + link.js"
+}
+
 $staged = @(Get-ChildItem $assetsDir -Recurse -File)
 $stagedMb = [math]::Round((($staged | Measure-Object Length -Sum).Sum) / 1MB, 1)
 Write-Host "staged assets/engine: $($staged.Count) files, $stagedMb MB"
@@ -259,3 +305,31 @@ foreach ($required in @(
     if (Test-Path $p) { Write-Host "  ok  $required" }
     else { throw "engine tree incomplete: missing $required" }
 }
+
+# The flock stand-in must have REPLACED the upstream package, not landed beside
+# it. If it did not, the APK ships the platform-refusing entry and fails on device
+# with the same message this shim exists to remove.
+#
+# Verified by hash against the source shim, not by searching for the upstream
+# error string: the shim's own comments quote that string to explain what it
+# replaces, so a substring search over the file false-positives on the fix.
+$stagedNas = Join-Path $assetsDir 'node_modules\@deepseek-ai\node-addon-system'
+$stagedFlock = Join-Path $stagedNas 'lib\flock.js'
+$sourceFlock = Join-Path $M1Workspace 'android\shims\node-addon-system\lib\flock.js'
+if (-not (Test-Path $stagedFlock)) { throw "flock shim missing at $stagedFlock" }
+if ((Get-FileHash $stagedFlock).Hash -ne (Get-FileHash $sourceFlock).Hash) {
+    throw "node-addon-system was not replaced by the Android shim: staged lib/flock.js differs from android/shims/node-addon-system/lib/flock.js"
+}
+# It must also be reachable under the name the consumer imports, and the
+# landlock half must still be present or dsh-sandbox-local fails to import.
+$nasManifest = Get-Content -LiteralPath (Join-Path $stagedNas 'package.json') -Raw | ConvertFrom-Json
+if ($nasManifest.name -ne '@deepseek-ai/node-addon-system') {
+    throw "node-addon-system shim declares the wrong package name: $($nasManifest.name)"
+}
+foreach ($sub in @('flock', 'landlock-run')) {
+    if (-not $nasManifest.exports."./$sub") { throw "node-addon-system shim is missing the ./$sub export" }
+}
+if (-not (Test-Path (Join-Path $stagedNas 'lib\index.js'))) {
+    throw "node-addon-system shim is missing lib/index.js (the landlock-run export)"
+}
+Write-Host "  ok  node-addon-system replaced by the Android flock shim (hash-verified)"

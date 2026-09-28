@@ -1,0 +1,22 @@
+{
+  "name": "@deepseek-ai/node-addon-system",
+  "version": "0.1.2-android.1",
+  "type": "module",
+  "description": "Android port of the prebuilt system primitives: flock(2) via Koffi, and upstream's landlock launcher API unchanged",
+  "private": true,
+  "exports": {
+    "./landlock-run": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./flock": {
+      "types": "./lib/flock.d.ts",
+      "default": "./lib/flock.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "BSD-3-Clause"
+}
