@@ -72,3 +72,12 @@ desktop.ini
 *.swp
 .vscode/
 .idea/
+
+# ---------------------------------------------------------------------------
+# Device run reports
+# ---------------------------------------------------------------------------
+# Timestamped output of tools/device/run-baseline.ps1 and
+# tools/diagnose-device.ps1. Machine- and moment-specific, so they are not
+# committed; the stable summary lives in docs/M1-报告.md.
+device-baseline-*.json
+device-report-*.txt

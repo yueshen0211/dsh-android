@@ -270,6 +270,7 @@ docs/
   设计文档.md                  design document (Chinese)
   M0-报告.md                   engine porting verification
   M1-报告.md                   APK milestone
+  M2-计划.md                   next milestone: mobile UI adaptation (Chinese)
   环境配置.md                  environment setup, measured state, sandbox limits (Chinese)
   release-notes-v0.1.0-m1.md  the published release notes for the current pre-release
   NEXT-SESSION-HANDOFF.md     working handoff: findings, conventions, next steps
