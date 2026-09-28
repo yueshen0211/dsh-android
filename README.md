@@ -209,6 +209,9 @@ tools/
   elf-patch-needed.mjs        rewrites versioned sonames in place
   verify-engine.mjs           M0 verification suite
   ws-probe.mjs                trust fence and WebSocket upgrade probe
+  cdp-*.mjs                   drive the on-device WebView over the DevTools protocol
+                              (probe / click / touch / mutate / props / ancestors / shot)
+  diagnose-device.ps1         one-command device report, for when a cable is attached
   m1/                         fetch → stage runtime → stage engine → open emulator GUI
   device/                     on-device diagnostics (run through `run-as`)
 docs/
@@ -356,6 +359,31 @@ $base = ((& $adb shell pm path dev.dsh.mobile) -join '') -replace 'package:','' 
 & $adb shell screencap -p /sdcard/s.png ; & $adb pull /sdcard/s.png .
 ```
 
+For UI problems specifically, drive the WebView over the DevTools protocol instead of guessing tap
+coordinates. `adb input tap` has to be scaled per device (the phone is dpr 2.4375, the emulator is
+not), a mis-scaled tap lands on nothing without any error, and synthetic taps do not reliably reach
+React's delegated handlers — so "the button does nothing" is easy to conclude wrongly. CDP addresses
+the element, reads back what the page contains, and reports console errors:
+
+```powershell
+# Forward the WebView debug socket (use the MAIN process pid, not :engine)
+$mainPid = ((& $adb shell pidof dev.dsh.mobile) -split '\s+')[0]
+& $adb forward tcp:9222 localabstract:webview_devtools_remote_$mainPid
+(Invoke-WebRequest http://127.0.0.1:9222/json -UseBasicParsing).Content   # take webSocketDebuggerUrl
+
+node tools/cdp-probe.mjs  .m1/ws-url.txt                      # DOM summary, API availability, console
+node tools/cdp-props.mjs  .m1/ws-url.txt "工作区"              # what handler is really attached
+node tools/cdp-mutate.mjs .m1/ws-url.txt "工作区"              # real input + every DOM mutation it causes
+node tools/cdp-shot.mjs   .m1/ws-url.txt "工作区" <serial> out.png   # screenshot with the panel still open
+```
+
+`cdp-shot.mjs` exists because a dropdown closes the moment the CDP client disconnects, so
+"click, then screenshot" never works as two separate commands.
+
+One caution learned the hard way: a modal renders *over* the page while remaining in the DOM, so an
+element can be present, enabled, correctly wired, and still unreachable by a click. Check for
+`[role=dialog]` before concluding a control is broken.
+
 ---
 
 ## Configuration
@@ -402,22 +430,33 @@ The engine boots with the overlay applied, prints its URL, and completes the bro
 (`303` + HttpOnly cookie, `401` without, `200` with). Node capability baseline confirmed:
 `node:sqlite`, `worker_threads`, `child_process`, WebCrypto, `fetch`, `AbortSignal.timeout`.
 
-**M1 — installable APK: working, verified on an x86_64 emulator.**
+**M1 — installable APK: working, verified on a real arm64 phone and on an x86_64 emulator.**
 
-Verified end to end on Android 14 (emulator): engine ready in ~10 s (first launch ~60 s to unpack),
-full GUI rendered, WebSocket stable, every error counter at zero:
+On the arm64 phone (Motorola XT2537-4, Android 16): engine ready in ~24 s warm, cold start from a
+wiped install ~74 s including the full asset unpack; full GUI rendered; workspace picker works
+end to end. On Android 14 (emulator, x86_64): engine ready in ~10 s. Every error counter at zero on
+both:
 
 ```
 Iterator: 0   AbortSignal.any: 0   Promise.withResolvers: 0
 connection lost: 0   uncaught: 0   plugin import failures: 0   engine exits: 0
 ```
 
-**Not yet verified on arm64 hardware.** The arm64 runtime is built, staged, and packaged by the same
-code path, but no real phone has run it yet. This cannot be checked on an emulator: the Android
-emulator refuses to run an arm64 image on an x86_64 host (`Avd's CPU Architecture 'arm64' is not
-supported by the QEMU2 emulator on x86_64 host`), so an arm64 device or host is required.
+The arm64 result was the open question, and it is now closed — including the three bugs that made
+the phone stall on "starting the DSH engine" while the emulator looked fine. None of them were
+architecture-related:
 
-To make that gap cheap to close, the app reports its own progress rather than requiring a cable:
+1. **A patch entry may only change `config` or `disabled`.** Trying to swap a row's package by
+   patching its `name` is dropped with a warning, so the original provider still loads and still
+   fails. Replace a provider by disabling the upstream row and inserting your own.
+2. **Statics do not cross processes.** `EngineService` runs in `:engine` while the activity runs in
+   the main process, so the ready URL has to be handed over through a file, not a static field.
+3. **Disabling a row can remove more than its service.** `dsh-host-directory-picker-auto` mounts a
+   *paired client plugin* at runtime; disabling it left the workspace button rendered but inert,
+   with nothing logged.
+
+Because a cable should not be required to diagnose the next one, the app also reports its own
+progress:
 
 - the boot screen shows the engine's live output, so a stall is visible and locatable on the device;
 - after 150 s without readiness it switches to "Still starting" with the elapsed time, the last
@@ -426,6 +465,10 @@ To make that gap cheap to close, the app reports its own progress rather than re
 
 Two outcomes that used to look identical are now distinguishable: the engine *never became ready*
 versus it *became ready and then exited*.
+
+**What is not verified: a full conversation.** Sending a message and getting a model reply needs a
+DeepSeek API key. The UI, engine, plugin tree, workspace selection and attachment provider are all
+exercised; the model round trip is not.
 
 ---
 
@@ -437,7 +480,7 @@ versus it *became ready and then exited*.
 | **Terminal** | The `node-pty` shim is `child_process`-backed: no controlling terminal, so no line editing, job control, or `resize`. Costs nothing in the shipped `web` profile, which mounts no terminal row and disables both shell tools. |
 | **Sandbox** | Every session runs with full access and no approval prompt, because Android cannot enforce the DSH sandbox. The OS sandbox and app-private storage are the boundary. Do not expose the engine off-device. |
 | **Size** | ~233 MB with both ABIs, ~140 MB with one. The largest single item is `libicudata.so` (31.6 MB), which can be pruned to a few MB with ICU's `icupkg`; the rest is Node (47 MB) and the engine tree (165 MB). |
-| **First launch** | Unpacks 25k files / ~165 MB, about 60 s on the test device. Correctness first; a single archive would be the next step. |
+| **First launch** | Unpacks 25k files / ~165 MB, about 74 s on the real phone (cold start from a wiped install, measured). Correctness first; a single archive would be the next step. |
 | **ABI** | `arm64-v8a` and `x86_64` only. No 32-bit build. |
 | **Notifications** | The runtime never requests `POST_NOTIFICATIONS`, so on Android 13+ the foreground-service notification may not appear. The service still runs. |
 
