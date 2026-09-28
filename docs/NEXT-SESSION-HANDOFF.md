@@ -8,9 +8,57 @@
 
 **当前唯一未完成项：arm64 真机验证。**
 
-真机上 app **卡在启动页**，但手机在本次会话中不可用（`adb devices` 只有模拟器），
-所以**还没拿到真机的失败日志**。必须在拿到日志之后才能继续，不要盲改代码 ——
-前两轮"盲改"的代价已经证明过了（补丁 name、跨进程 static 都是靠日志才定位的）。
+## 本轮已修的 bug：工作区打不开（已在模拟器验证）
+
+用户报告"打不开工作区"。根因是**我把 `directory-picker` 整行禁用了** ——
+而 `@deepseek-ai/dsh-api-workspace-controller` 注入 `directoryPicker` 服务：
+
+```
+@deepseek-ai/dsh-api-workspace-controller: pending (waiting for service: directoryPicker)
+```
+
+服务缺失 → 工作区界面根本渲染不出来。
+
+**修法与 attachment 那次同一个道理**：能力被消费的行**只能替换、不能删除**。
+改为禁用 `-auto`、插入 `-browse`：
+
+```yaml
+- id: directory-picker
+  disabled: !!js process.platform === 'android'
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+```
+
+`-browse` 只用 `node:fs`，无原生命令、无 OS 对话框，注册的仍是同一个
+`directoryPicker` 服务名，Web UI 走同样的 RPC。
+
+**已在 x86_64 模拟器验证**：组合树里 `directory-picker-browse` 启用、
+`-auto` 禁用；引擎启动**无任何 pending**；UI 渲染出工作区选择器
+（"Choose workspace" + "Choose a workspace to start"），控制台无错误。
+
+> 说明：我用 `adb input tap` 点击下拉时面板没弹出，但这**可能是 adb 点击的
+> 交互问题而非产品 bug** —— 后端服务、注册、渲染都已确认正常，且控制台无报错。
+> 真机/真人点击是更可靠的验证方式。
+
+**这已经是第二次踩同一个坑**（第一次是 `attachments`，导致 file-upload 与
+session-controller 一起 pending）。写 profile 时请务必先确认：**这个行提供的服务
+有没有被别的行注入？** 有的话就必须替换 provider，不能 disable。
+
+## 回来后的第一步
+
+手机插上 USB、允许 USB 调试，重新装一次最新 APK（**必须重装**，旧版没有上面的诊断），然后：
+
+```powershell
+. D:\Work\DSHapk\tools\android-env.ps1
+$adb="$env:ANDROID_HOME\platform-tools\adb.exe"
+& $adb install -r D:\Work\DSHapk\.m1\release\dsh-android-0.1.0-m1-arm64-v8a-debug.apk
+& $adb shell am start -n dev.dsh.mobile/.MainActivity
+```
+
+若仍卡住：**屏幕上的日志就是答案**，或者跑 `. D:\Work\DSHapk\tools\diagnose-device.ps1`
+收一份完整报告。
+
 
 ## 回来后的第一步
 
