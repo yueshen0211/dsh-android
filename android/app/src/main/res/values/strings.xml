@@ -10,4 +10,6 @@
     <string name="boot_failed_title">The engine could not start</string>
     <string name="retry">Retry</string>
     <string name="copy_diagnostics">Copy diagnostics</string>
+    <string name="boot_stalled_title">Still starting</string>
+    <string name="boot_stalled_detail">The engine has been starting for %1$d seconds. The messages below show where it is; use Copy diagnostics to share them.</string>
 </resources>

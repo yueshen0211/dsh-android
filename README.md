@@ -405,9 +405,19 @@ connection lost: 0   uncaught: 0   plugin import failures: 0   engine exits: 0
 ```
 
 **Not yet verified on arm64 hardware.** The arm64 runtime is built, staged, and packaged by the same
-code path, but the real-device run is outstanding. The most likely remaining differences are that
-`lib/arm64` holds a different set of `.so` files and that a production WebView is newer than Chrome
-113 (in which case the polyfills are a harmless no-op).
+code path, but no real phone has run it yet. This cannot be checked on an emulator: the Android
+emulator refuses to run an arm64 image on an x86_64 host (`Avd's CPU Architecture 'arm64' is not
+supported by the QEMU2 emulator on x86_64 host`), so an arm64 device or host is required.
+
+To make that gap cheap to close, the app reports its own progress rather than requiring a cable:
+
+- the boot screen shows the engine's live output, so a stall is visible and locatable on the device;
+- after 150 s without readiness it switches to "Still starting" with the elapsed time, the last
+  lines of engine output, and a "copy diagnostics" button;
+- `files/engine-boot-failure.log` records the full reason when a start fails outright.
+
+Two outcomes that used to look identical are now distinguishable: the engine *never became ready*
+versus it *became ready and then exited*.
 
 ---
 

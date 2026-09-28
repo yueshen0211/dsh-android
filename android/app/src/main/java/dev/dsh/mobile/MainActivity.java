@@ -60,6 +60,10 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean webViewLoaded;
     private boolean started;
+    /** When the boot screen first appeared, for the stall hint. */
+    private final long bootStartedAt = System.currentTimeMillis();
+    /** How long to wait before saying this looks stuck rather than merely slow. */
+    private static final long STALL_HINT_MS = 150_000L;
 
     /**
      * Engine state as published by {@link EngineService}.
@@ -393,22 +397,71 @@ public class MainActivity extends Activity {
 
         if ("preparing".equals(state.status)) {
             bootDetail.setText(R.string.boot_preparing);
+            bootLog.setText(tailLines(readBootLog(), 8));
         } else if ("starting".equals(state.status)) {
             bootDetail.setText(R.string.boot_starting);
-        }
-
-        // The log tail stays in the service process, so the boot screen can no
-        // longer show it live. The failure path still gets the full text, from
-        // the diagnostics file the service writes for exactly this reason.
-        boolean failed = "failed".equals(state.status) || state.error != null;
-        if (failed) {
+            String log = readBootLog();
+            bootLog.setText(tailLines(log, 15));
+            // A stall and slow progress look identical on a static screen. After a
+            // while, say so and show where it stopped -- this is the information
+            // that previously required connecting a cable.
+            if (System.currentTimeMillis() - bootStartedAt > STALL_HINT_MS) {
+                bootTitle.setText(R.string.boot_stalled_title);
+                bootDetail.setText(getString(R.string.boot_stalled_detail,
+                        (System.currentTimeMillis() - bootStartedAt) / 1000));
+                copyButton.setVisibility(View.VISIBLE);
+            }
+        } else if ("stopped".equals(state.status) || "failed".equals(state.status) || state.error != null) {
+            // Distinguishing "still starting" from "started and then died" is the
+            // single most useful signal when there are no logs to hand: the first
+            // means the engine never became ready, the second means it was ready
+            // and something killed it afterwards. Both used to render as the same
+            // motionless boot screen.
             bootTitle.setText(R.string.boot_failed_title);
             bootDetail.setTextColor(getColorCompat(R.color.boot_error));
-            bootDetail.setText(state.error == null ? "unknown error" : state.error);
-            bootLog.setText(readFailureDiagnostics());
+            bootDetail.setText(state.error == null ? "the engine stopped unexpectedly" : state.error);
+            String diagnostics = readFailureDiagnostics();
+            bootLog.setText(diagnostics.isEmpty() ? tailLines(readBootLog(), 30) : diagnostics);
             retryButton.setVisibility(View.VISIBLE);
             copyButton.setVisibility(View.VISIBLE);
         }
+    }
+
+    /**
+     * The service mirrors every engine output line here, so the boot screen can
+     * show what is actually happening instead of only a spinner.
+     */
+    private String readBootLog() {
+        File file = new File(getFilesDir(), EngineService.BOOT_LOG_FILE);
+        if (!file.isFile()) {
+            return "";
+        }
+        try {
+            byte[] buffer = new byte[(int) Math.min(file.length(), 64_000L)];
+            java.io.FileInputStream in = new java.io.FileInputStream(file);
+            try {
+                int read = in.read(buffer);
+                return read <= 0 ? "" : new String(buffer, 0, read, "UTF-8");
+            } finally {
+                in.close();
+            }
+        } catch (java.io.IOException failure) {
+            return "";
+        }
+    }
+
+    /** Last {@code count} lines of a text block, for a small on-screen log view. */
+    private static String tailLines(String text, int count) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        String[] lines = text.split("\n");
+        int from = Math.max(0, lines.length - count);
+        StringBuilder out = new StringBuilder();
+        for (int i = from; i < lines.length; i++) {
+            out.append(lines[i]).append('\n');
+        }
+        return out.toString();
     }
 
     /** The service writes the complete boot failure here (app-private storage). */

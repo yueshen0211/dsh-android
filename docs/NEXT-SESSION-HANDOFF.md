@@ -39,13 +39,56 @@
 | arm64 `.so` 依赖闭包 | ✅ **0 缺失** |
 | koffi 绑定路径 | ✅ 符合运行时查找路径 `@koromix/koffi-android-arm64/android_arm64/koffi.node` |
 
-## 备选路径：arm64 模拟器
+## 备选路径：arm64 模拟器 —— ❌ 不可行（已实测）
 
-手机若迟迟不方便，可以复现 arm64 代码路径而不需要真机 —— 这也是**唯一**能在没有手机时
-验证 arm64 的办法。系统镜像（Android 14 / arm64-v8a）已在下载。
+**现代 Android 模拟器拒绝跨架构运行**，arm64 镜像在 x86_64 主机上直接 FATAL：
 
-**注意预期**：x86_64 主机上跑 arm64 镜像只能靠 QEMU 指令翻译，首次解包 + 启动可能要
-**20–40 分钟**（x86_64 镜像只要 10 秒）。慢，但有效。
+```
+FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2 emulator
+        on x86_64 host. System image must match the host architecture.
+```
+
+所以 **arm64 只能在真机（或 arm64 主机）上验证**，没有捷径。arm64 系统镜像
+（`system-images;android-34;google_apis;arm64-v8a`）已经下好放在 `.toolchain/sdk` 里，
+但它在这台机器上跑不起来 —— 换到 arm64 机器才能用。
+
+## 已做的替代努力：让 App 自己说清卡在哪
+
+既然拿不到日志，就把日志搬到屏幕上。服务现在把引擎输出**镜像写进
+`files/engine-boot.log`**，UI 在启动页实时显示其尾部；超过 150 秒仍未就绪时，
+标题变成「Still starting」并显示已等待秒数 + 最后 15 行输出 + 「复制诊断」按钮。
+
+已在 x86_64 模拟器验证生效：
+
+```
+engine-boot.log 存在，共 5 行：
+    engine dir: /data/user/0/dev.dsh.mobile/files/engine
+    native lib dir: /data/app/~~…==/lib/x86_64
+    engine tree already present
+    dsh web: http://127.0.0.1:46853/?token=…
+    engine url: http://127.0.0.1:46853/?token=…
+engine-state.txt:  status=running
+```
+
+**因此再次遇到"卡住"时，屏幕上会直接显示引擎走到哪一步** —— 不需要连电脑。
+这也顺带区分了两种此前无法分辨的情况：引擎**从未就绪** vs **就绪后又退出**。
+
+**Releases 里的 arm64 APK 已更新为含此改进的版本**：
+`sha256:ac7179054e8032d449290ecdcdeab4dae1fa19719b8dee35b0059eca79ce58cd`
+
+## 回来后的第一步
+
+手机插上 USB、允许 USB 调试，重新装一次最新 APK（**必须重装**，旧版没有上面的诊断），然后：
+
+```powershell
+. D:\Work\DSHapk\tools\android-env.ps1
+$adb="$env:ANDROID_HOME\platform-tools\adb.exe"
+& $adb install -r D:\Work\DSHapk\.m1\release\dsh-android-0.1.0-m1-arm64-v8a-debug.apk
+& $adb shell am start -n dev.dsh.mobile/.MainActivity
+```
+
+若仍卡住：**屏幕上的日志就是答案**，或者跑 `. D:\Work\DSHapk\tools\diagnose-device.ps1`
+收一份完整报告。
 
 ## 若修复后要发新版本
 

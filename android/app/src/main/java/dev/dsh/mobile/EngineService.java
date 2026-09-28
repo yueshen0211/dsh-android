@@ -75,6 +75,16 @@ public class EngineService extends Service {
      */
     private static final String STATE_FILE = "engine-state.txt";
 
+    /**
+     * Live boot log, mirrored for the UI process.
+     *
+     * <p>Appended on every engine output line so the boot screen can show real
+     * progress. When a start stalls, the last lines say where -- which is worth
+     * more than any amount of guessing, and removes the need to attach a cable
+     * just to find out.
+     */
+    static final String BOOT_LOG_FILE = "engine-boot.log";
+
     private void publishState(String status, String url, String error) {
         LocalState.status = status;
         LocalState.url = url;
@@ -277,6 +287,19 @@ public class EngineService extends Service {
         // Bounded so a chatty engine cannot grow this without limit; the tail is
         // what matters for diagnosing a failure.
         LocalState.log = next.length() > 200_000 ? next.substring(next.length() - 200_000) : next;
+
+        // Also mirrored to a file, because the UI runs in another process and
+        // cannot read LocalState. Without this the boot screen has nothing to
+        // show while the engine is starting, so a stall looks identical to slow
+        // progress -- and the only way to learn what happened is to pull logs
+        // over adb, which is exactly the situation this avoids.
+        String tail = next.length() > 20_000 ? next.substring(next.length() - 20_000) : next;
+        File file = new File(getFilesDir(), BOOT_LOG_FILE);
+        try (OutputStream stream = new FileOutputStream(file)) {
+            stream.write(tail.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ignored) {
+            // Best-effort: diagnostics must never break the boot.
+        }
     }
 
     /** Persist the boot log so a failure can be read without a debugger. */
