@@ -134,15 +134,33 @@
 # and the workspace surface cannot open at all.
 #
 # `dsh-host-directory-picker-browse` is the right backend here: it lists
-# directories with node:fs and has no native dependency and no OS dialog. The
-# service name is what matters (DirectoryPicker registers `directoryPicker`), and
-# the Web UI drives it over the same RPC either way.
+# directories with node:fs and has no native dependency and no OS dialog.
+#
+# The CLIENT half must be added explicitly, and this is the part that is easy to
+# miss. `-auto` carries an internal mount table pairing each host backend with its
+# client plugin, and it injects `loader` precisely so it can mount that client
+# plugin at runtime:
+#
+#   const inject = ["webServer", "loader"];
+#   browse: { host: '@…/dsh-host-directory-picker-browse',
+#             client: '@…/dsh-client-ui-directory-picker-browse' }
+#
+# Disabling `-auto` therefore removes the host backend AND the client plugin. The
+# client plugin is what registers the directory-flow slots
+# (`conversation.hero.workspace.directoryFlow` and
+# `sidebar.workspaces.directoryFlow`); with it absent the workspace picker
+# renders but its button does nothing, because the flow it opens has no owner.
+#
+# So both halves are declared here as ordinary rows.
 - id: directory-picker
   disabled: !!js process.platform === 'android'
 
 - insert:
     - id: directory-picker-browse
       name: '@deepseek-ai/dsh-host-directory-picker-browse'
+
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 
 # ── 6. Desktop integrations with no mobile equivalent ────────────────────────
 # `open-in-app` resolves host applications from the desktop registry; on Android

@@ -215,10 +215,11 @@ docs/
   设计文档.md                  design document (Chinese)
   M0-报告.md                   engine porting verification
   M1-报告.md                   APK milestone
+  环境配置.md                  environment setup, measured state, sandbox limits (Chinese)
   NEXT-SESSION-HANDOFF.md     working handoff: findings, conventions, next steps
 ```
 
-Generated and intentionally not committed: `.toolchain/` (17 GB of JDK/SDK/NDK/emulator),
+Generated and intentionally not committed: `.toolchain/` (21 GB of JDK/SDK/NDK/emulator),
 `android/app/src/main/assets/engine/` (the DSH tree), `android/app/src/main/jniLibs/*/`
 (the Node runtime). All are reproduced by the scripts below.
 
@@ -228,6 +229,9 @@ Generated and intentionally not committed: `.toolchain/` (17 GB of JDK/SDK/NDK/e
 
 Requires Windows with PowerShell and Node.js on `PATH`. Everything else is downloaded into the
 workspace; nothing is installed system-wide.
+
+> A full environment document — measured versions, directory-redirection rationale, sandbox limits and
+> a from-scratch checklist for another machine — is in [`docs/环境配置.md`](docs/环境配置.md) (Chinese).
 
 ### 1. Toolchain
 

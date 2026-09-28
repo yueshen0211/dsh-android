@@ -6,12 +6,30 @@
 
 # ⏸ 从这里继续（RESUME HERE）
 
-**当前唯一未完成项：arm64 真机验证。**
+**arm64 真机验证已通过**（见本节末尾），当前进入 M2 前的收尾与文档同步。
 
-## 本轮已修的 bug：工作区打不开（已在模拟器验证）
+## 真机验证结果：✅ 通过
 
-用户报告"打不开工作区"。根因是**我把 `directory-picker` 整行禁用了** ——
-而 `@deepseek-ai/dsh-api-workspace-controller` 注入 `directoryPicker` 服务：
+真机 `ZS22224CG6`（XT2537-4 / Android 16 / arm64-v8a）上完整跑通：
+
+```
+dsh web: http://127.0.0.1:44033/?token=…
+engine ready on port 44033
+engine-state.txt: status=running
+未捕获错误 0   插件加载失败 0   引擎退出 0
+```
+
+界面完整：工作区选择器、输入框、`完全权限` / `DeepSeek-V41-Flash` / `High` 等控件齐全，
+工作区已选中并显示为 `files ⌄`。
+
+**arm64 架构本身从未有问题** —— 之前真机"卡在 starting"的原因是下面两个
+profile bug，与架构无关。（arm64 模拟器路线已确认不可行，见下文。）
+
+## 本轮修掉的 bug：工作区打不开（两个叠加原因）
+
+### 原因一：禁用了被消费的服务行
+
+`@deepseek-ai/dsh-api-workspace-controller` 注入 `directoryPicker` 服务：
 
 ```
 @deepseek-ai/dsh-api-workspace-controller: pending (waiting for service: directoryPicker)
@@ -30,50 +48,78 @@
       name: '@deepseek-ai/dsh-host-directory-picker-browse'
 ```
 
-`-browse` 只用 `node:fs`，无原生命令、无 OS 对话框，注册的仍是同一个
-`directoryPicker` 服务名，Web UI 走同样的 RPC。
+### 原因二（更隐蔽）：`-auto` 同时负责挂载**客户端**插件
 
-**已在 x86_64 模拟器验证**：组合树里 `directory-picker-browse` 启用、
-`-auto` 禁用；引擎启动**无任何 pending**；UI 渲染出工作区选择器
-（"Choose workspace" + "Choose a workspace to start"），控制台无错误。
+**只加 host 端的 `-browse` 是不够的。** `-auto` 内部有一张 host/client 配对表，
+并且它 `inject: ["webServer", "loader"]` —— 注入 `loader` 就是为了在运行时挂载客户端插件：
 
-> 说明：我用 `adb input tap` 点击下拉时面板没弹出，但这**可能是 adb 点击的
-> 交互问题而非产品 bug** —— 后端服务、注册、渲染都已确认正常，且控制台无报错。
-> 真机/真人点击是更可靠的验证方式。
-
-**这已经是第二次踩同一个坑**（第一次是 `attachments`，导致 file-upload 与
-session-controller 一起 pending）。写 profile 时请务必先确认：**这个行提供的服务
-有没有被别的行注入？** 有的话就必须替换 provider，不能 disable。
-
-## 回来后的第一步
-
-手机插上 USB、允许 USB 调试，重新装一次最新 APK（**必须重装**，旧版没有上面的诊断），然后：
-
-```powershell
-. D:\Work\DSHapk\tools\android-env.ps1
-$adb="$env:ANDROID_HOME\platform-tools\adb.exe"
-& $adb install -r D:\Work\DSHapk\.m1\release\dsh-android-0.1.0-m1-arm64-v8a-debug.apk
-& $adb shell am start -n dev.dsh.mobile/.MainActivity
+```js
+const inject = ["webServer", "loader"];
+browse: { host: '@…/dsh-host-directory-picker-browse',
+          client: '@…/dsh-client-ui-directory-picker-browse' }
 ```
 
-若仍卡住：**屏幕上的日志就是答案**，或者跑 `. D:\Work\DSHapk\tools\diagnose-device.ps1`
-收一份完整报告。
+**禁用 `-auto` 会同时移除 host 后端与客户端插件。** 而客户端插件正是注册
+`conversation.hero.workspace` 与 `conversation.hero.workspace.directoryFlow`
+这两个 slot 的那个 —— slot 无人占用时，**按钮照常渲染，但点击后什么都不发生**，
+控制台也不报错。所以必须两半都显式声明：
+
+```yaml
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+```
+
+**结论：禁用 `-auto` 这类"双面"行时，必须同时替换它的 host 与 client 两半。**
+
+**这是第三次踩同一类坑**（前两次：`attachments` 导致 file-upload 与
+session-controller 一起 pending；`directoryPicker` 导致 workspace-controller pending）。
+写 profile 时务必先确认：**这个行提供的服务有没有被别的行注入？它有没有副作用
+（挂载别的插件、注册 slot）？** 有就必须替换 provider，不能 disable。
+
+## 定位这类 bug 的方法（值得复用）
+
+`adb input tap` 猜坐标不可靠（真机 dpr 2.4375、模拟器不同），而且**合成事件骗不过
+React 的事件委托**，会出现"点了没反应"的假象。正确做法是用 **WebView 的 DevTools 协议**
+直接查 DOM 与 `__reactProps`：
+
+```powershell
+# 1) 转发 WebView 调试端口（用主进程 pid，不是 :engine 的）
+$mainPid = ((& $adb -s <serial> shell pidof dev.dsh.mobile) -split '\s+')[0]
+& $adb -s <serial> forward tcp:9222 localabstract:webview_devtools_remote_$mainPid
+
+# 2) 探查页面（DOM 摘要、API 可用性、控制台）
+node tools/cdp-probe.mjs .m1/ws-url.txt
+# 3) 查元素上真实挂的 handler
+node tools/cdp-props.mjs .m1/ws-url.txt "选择工作区"
+# 4) 真实触摸/鼠标输入，并监听 DOM 变化
+node tools/cdp-touch.mjs .m1/ws-url.txt "选择工作区"
+node tools/cdp-mutate.mjs .m1/ws-url.txt "选择工作区"
+```
+
+`tools/cdp-*.mjs` 就是为此写的，以后 UI 类问题都用这套，别再猜坐标。
+
+## 仍未做的一件事
+
+**完整对话流程尚未端到端验证**（发消息 → 模型回复），因为需要一个 DeepSeek API key。
+UI、引擎、工作区、插件树都已确认正常；这一步需要真实 key 才能跑。
 
 
-## 回来后的第一步
-
-手机插上 USB、允许 USB 调试，然后：
+## 如果真机再出问题：第一步
 
 ```powershell
 . D:\Work\DSHapk\tools\diagnose-device.ps1
 ```
 
-一条命令就能收齐定位所需的一切（设备信息、安装版本、进程与界面状态、UI 轮询的 state 文件、
+一条命令收齐定位所需的一切（设备信息、安装版本、进程与界面状态、UI 轮询的 state 文件、
 引擎失败日志、引擎 logcat、WebView 控制台与版本、解包后的目录结构），
-并把报告文件路径打印出来。**把那个文件发回来即可定位。**
+并打印报告文件路径。**把那个文件发回来即可定位。**
 
-> 若只想手工看一眼，最关键的一条：
-> `adb shell run-as dev.dsh.mobile cat files/engine-boot-failure.log`
+> 手工最快的一眼：
+> `adb shell run-as dev.dsh.mobile cat files/engine-boot.log`
+> （屏幕启动页也在实时显示它的尾部 15 行）
 
 ## 已经排除的可能（不必重查）
 
