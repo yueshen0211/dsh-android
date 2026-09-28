@@ -170,10 +170,12 @@ node tools/cdp-mutate.mjs .m1/ws-url.txt "选择工作区"
 
 `tools/cdp-*.mjs` 就是为此写的，以后 UI 类问题都用这套，别再猜坐标。
 
-## 仍未做的一件事
+## 仍未做的两件事（都不阻塞）
 
-**完整对话流程尚未端到端验证**（发消息 → 模型回复），因为需要一个 DeepSeek API key。
-UI、引擎、工作区、插件树都已确认正常；这一步需要真实 key 才能跑。
+1. **带真实图片的附件链路** —— `@dsh-mobile/attachment-android` 已确认注册、`imageLimits` 正确，
+   但没有用真照片端到端跑过一次。
+2. **shell 工具** —— shipped `web` profile 不挂终端行、两个 shell 工具都禁用，所以
+   `node-pty` shim 的能力边界在默认配置下碰不到。
 
 
 ## 如果真机再出问题：第一步
@@ -265,9 +267,46 @@ $adb="$env:ANDROID_HOME\platform-tools\adb.exe"
 # 不需要动 jniLibs，x86_64 原样留着给模拟器用
 Copy-Item android\app\build\cli-debug\dsh-debug.apk `
     .m1\release\dsh-android-0.1.0-m1-arm64-v8a-debug.apk -Force
+
+# 上传：必须用这个脚本，不要手写两条 gh release upload（原因见下）
 . .\tools\gh-env.ps1
-& gh release upload v0.1.0-m1 <新APK> --repo yueshen0211/dsh-android --clobber
+.\tools\publish-release.ps1
 ```
+
+**为什么必须有 `publish-release.ps1`** —— 手写上传踩过两个真实的坑：
+
+1. **`--clobber` 是先删后传。** 旧资产会被删掉再重新上传；而这个沙箱里 140 MB 的 POST
+   会以裸 `EOF` 断掉。于是"更新失败"直接变成"发布里没有 APK 了"，比留着旧版还糟。
+   脚本会重试，并且**只有 GitHub 自己算出的摘要与本地一致才算成功**。
+2. **顺序不能错。** 先传 `SHA256SUMS.txt` 会短暂发布一个"指向不存在文件"的摘要 ——
+   这正是"下载到的构建完好却报校验失败"的成因。脚本强制先验 APK、通过后才传校验和，
+   并且拒绝发布与当前 APK 摘要不符的校验和文件。
+
+### 发布说明是文件，不是网页上改的
+
+`docs/release-notes-v0.1.0-m1.md` 是发布说明的**唯一来源**，改完用：
+
+```powershell
+& gh release edit v0.1.0-m1 --repo yueshen0211/dsh-android `
+    --title "..." --notes-file docs\release-notes-v0.1.0-m1.md
+```
+
+不要直接在网页上编辑 —— 那样内容就只存在于 GitHub 上，仓库里查不到，
+下次发布也无从对照。
+
+### 发布后一定要验一遍下载
+
+**上传成功 ≠ 用户拿到的就是测过的那个包。** 实测方法：
+
+```powershell
+# 从 Releases 下载回来，与本地构建比 sha256
+$url = "https://github.com/yueshen0211/dsh-android/releases/download/v0.1.0-m1/dsh-android-0.1.0-m1-arm64-v8a-debug.apk"
+node -e "fetch(process.argv[1],{redirect:'follow'}).then(async r=>{require('fs').writeFileSync('.m1/dl.apk',Buffer.from(await r.arrayBuffer()))})" $url
+(Get-FileHash .m1\dl.apk).Hash -eq (Get-FileHash .m1\release\dsh-android-0.1.0-m1-arm64-v8a-debug.apk).Hash
+```
+
+（用 Node 的 `fetch`，不要用 `curl` / `Invoke-WebRequest` —— 本沙箱里它们会
+`schannel: AcquireCredentialsHandle failed`。）
 
 ### 关于「双 ABI 安装包」
 
@@ -282,10 +321,14 @@ Copy-Item android\app\build\cli-debug\dsh-debug.apk `
 
 ### 当前发布资产
 
-**`sha256:3315d862d5cf68a7c590d78205353cc88d40e41134e7c174f02cbbbe4f9105cb`**
-—— 含 host + client 两半修复，真机冷启动实测通过（详见下方"发布用的 arm64-only 构建"）。
+**`sha256:c6012655a342210149db92e47b23bb80bbdc7902f73c314bc37cc9baaf799cac`**（140.23 MB）
+—— 含全部修复（host + client 选择器、flock、link），**真机完整对话实测通过**，
+且已从 Releases 下载回来比对过摘要。
 
-（历史：`e97c7d60…` 是只有 host 半修复的版本，工作区按钮仍点不动，已被覆盖。）
+发布说明来源：`docs/release-notes-v0.1.0-m1.md`（别在网页上改）。
+
+（历史：`3315d862…` 是 flock/link 修复前的版本 —— 那个版本在真机上**每次运行都会失败**；
+`e97c7d60…` 更早，工作区按钮点不动。均已被覆盖。）
 
 ---
 
@@ -353,14 +396,15 @@ Releases 里的 APK 只含 arm64-v8a（140.2 MB），因为真机不需要 x86_6
 ### 本轮发布的 arm64 资产（已实测）
 
 ```
-sha256:3315d862d5cf68a7c590d78205353cc88d40e41134e7c174f02cbbbe4f9105cb
+sha256:c6012655a342210149db92e47b23bb80bbdc7902f73c314bc37cc9baaf799cac
 ```
 
 已验证：APK 内 `lib/` 只有 `arm64-v8a`（11 个 `.so`）、
 `assets/engine/android.patch.yml` 与仓库里的 `profile/android.patch.yml` 逐字节一致、
-`@deepseek-ai/dsh-client-ui-directory-picker-browse` 已打包。
+`@deepseek-ai/dsh-client-ui-directory-picker-browse` 已打包、
+`assets/engine/node_modules/android-support/android-fs/{register.mjs,link.js}` 已打包。
 
-**真机 `pm clear` 后从零冷启动实测通过**：74 秒（含完整资产解包）→ `status=running` →
+**真机从零冷启动 + 完整对话实测通过**：72 秒（含完整资产解包）→ `status=running` →
 内测声明 → API key 对话框 → 工作区首次选择（浏览对话框 → 进入 `workspace` → 打开）→
 chip 显示 `workspace`、输入框就绪。**这条路径覆盖的是用户第一次安装后的真实经历。**
 
@@ -368,9 +412,10 @@ chip 显示 `workspace`、输入框就绪。**这条路径覆盖的是用户第�
 
 ## 一句话现状
 
-**跑通了，真机与模拟器都是。** 真机（arm64 / Android 16）截图与 DOM 双重确认：
-DSH 界面完整渲染、引擎 `status=running`、**工作区选择器可用**
-（点开面板 → 「添加工作区…」→ 目录浏览对话框列出真实目录并能逐级进入）。
+**完全跑通了 —— 真机与模拟器都是，且真机能正常对话。**
+
+真机（arm64 / Android 16）截图、DOM、日志三重确认：DSH 界面完整渲染、引擎 `status=running`、
+工作区选择器可用、**发消息能拿到模型回复**、会话日志正常落盘。
 模拟器（x86_64 / Android 14）同样通过。
 
 错误统计全部归零：
@@ -380,11 +425,12 @@ Iterator: 0   AbortSignal.any: 0   Promise.withResolvers: 0
 connection lost: 0   未捕获错误: 0   插件加载失败: 0   引擎退出: 0
 ```
 
-唯一未做的是**完整对话流程**（发消息 → 模型回复），需要一个 DeepSeek API key。
+**当前没有阻塞项。** 尚未验证的只有两项，都不影响正常使用：
+带真实图片的附件链路、以及 shell 工具（shipped profile 不挂终端行）。
 
-## 本轮修掉的「卡在 starting」根因
+## 本轮修掉的根因（共 5 个，按发现顺序）
 
-按发现顺序，**前两个是用户真机上卡住的直接原因**：
+真机上先后暴露 5 个问题，**没有一个是 arm64 架构问题**：
 
 ### 1. 补丁不能改 `name`（真机根因）
 
