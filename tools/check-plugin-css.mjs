@@ -66,12 +66,16 @@ check('parentheses balanced', parenOpens === parenCloses, `${parenOpens} open, $
 check('has a rule for the root frame', /\[class\*='_frame'\]\{/.test(css), '');
 check('has a rule for the composer', /\[class\*='_composerSeat'\]\{/.test(css), '');
 
-// The handle must be positioned by its own rule, not left to inherit static.
+// The sessions button must be laid out by its own rule, not left as a bare button.
 const handleRule = /#dsh-mobile-ui-handle\{[^}]*\}/.exec(css);
-check('handle has its own rule', !!handleRule, handleRule ? handleRule[0].slice(0, 60) + '...' : 'missing');
+check('sessions button has its own rule', !!handleRule, handleRule ? handleRule[0].slice(0, 60) + '...' : 'missing');
 if (handleRule) {
-  check('handle is not static', /position:fixed/.test(handleRule[0]), '');
-  check('handle meets the 44px touch floor', /height:44px/.test(handleRule[0]) && /width:44px/.test(handleRule[0]), '');
+  // It sits in the composer's flow, so it must NOT be a fixed overlay: a fixed one
+  // would need to track the composer's height and the keyboard itself.
+  check('sessions button is in flow, not fixed', !/position:fixed/.test(handleRule[0]), '');
+  check('sessions button aligns to the trailing edge', /align-self:flex-end/.test(handleRule[0]), '');
+  // It matches the composer's own triggers: 28px tall, 16px pill radius.
+  check('sessions button matches the composer control size', /height:28px/.test(handleRule[0]) && /border-radius:16px/.test(handleRule[0]), '');
 }
 
 // Nothing may use `transform` for the drawer: it is inert on that element.

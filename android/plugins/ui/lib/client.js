@@ -122,18 +122,27 @@ window.__ModuleLoader__.load({
       "[class*='_composerSeat']{margin-top:auto!important;",
       "padding-bottom:calc(env(safe-area-inset-bottom,0px) + 8px)!important;}",
 
-      // ── Drawer handle ─────────────────────────────────────────────────────
-      // An explicit tap target, NOT an edge swipe. Android 10+ reserves the left
-      // and right screen edges for the back gesture, and the system takes those
-      // touches before the page sees them -- so a swipe-in drawer cannot work
-      // without fighting the OS. The handle sits in the bottom-left thumb zone.
-      "#" + HANDLE_ID + "{position:fixed;left:max(10px,env(safe-area-inset-left,0px));",
-      "bottom:calc(env(safe-area-inset-bottom,0px) + 10px);",
-      "width:44px;height:44px;z-index:50;display:flex;align-items:center;justify-content:center;",
-      "border:0;border-radius:22px;cursor:pointer;",
-      "background:color-mix(in srgb,currentColor 10%,transparent);",
-      "color:inherit;opacity:.75;transition:opacity 160ms ease;}",
-      "#" + HANDLE_ID + ":active{opacity:1;}",
+      // ── Sessions button, directly above the composer ──────────────────────
+      // Sits in the composer's own column and matches the app's control idiom:
+      // 28px tall with a 16px pill radius is exactly what the composer's model and
+      // permission triggers use, so this reads as part of that toolbar rather than
+      // as something the port bolted on. `align-self:flex-end` puts it at the right
+      // edge of the composer block, which is where a thumb reaches from the same
+      // hand holding the phone.
+      //
+      // Deliberately NOT an edge gesture: Android 10+ reserves the screen edges for
+      // the back gesture and consumes those touches before the page sees them, so a
+      // swipe-in drawer competes with the OS. See §9.6 of the M2 design notes.
+      "#" + HANDLE_ID + "{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;",
+      "height:28px;padding:0 10px;margin:0 2px 8px 0;",
+      "font:inherit;font-size:13px;line-height:1;",
+      "color:inherit;opacity:.82;",
+      "background:color-mix(in srgb,currentColor 8%,transparent);",
+      "border:1px solid color-mix(in srgb,currentColor 12%,transparent);",
+      "border-radius:16px;cursor:pointer;",
+      "transition:opacity 140ms ease,background 140ms ease;}",
+      "#" + HANDLE_ID + ":active{opacity:1;background:color-mix(in srgb,currentColor 16%,transparent);}",
+      "#" + HANDLE_ID + " svg{width:14px;height:14px;flex:none;}",
       "[class*='_frame'][" + OPEN_ATTR + "] #" + HANDLE_ID + "{opacity:0;pointer-events:none;}",
 
       "}",
@@ -203,19 +212,33 @@ window.__ModuleLoader__.load({
           if (s) s.style.removeProperty("left");
         });
 
-        // ── handle + scrim ──────────────────────────────────────────────────
-        // A real button, so it is reachable by assistive tech and by keyboard
-        // rather than being a decorative div with a listener.
+        // ── sessions button + scrim ─────────────────────────────────────────
+        // A real button, so it is reachable by assistive tech and by keyboard.
         const handle = document.createElement("button");
         handle.id = HANDLE_ID;
         handle.type = "button";
-        handle.setAttribute("aria-label", "打开会话列表");
-        // A chevron pointing right, drawn inline so nothing has to be fetched.
+        handle.setAttribute("aria-label", "会话列表");
+        // A panel icon, inline so nothing has to be fetched.
         handle.innerHTML =
-          '<svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-          + '<path d="M6 3.5 L10.5 8 L6 12.5" fill="none" stroke="currentColor" '
-          + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        document.body.appendChild(handle);
+          '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+          + '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25" fill="none" '
+          + 'stroke="currentColor" stroke-width="1.4"/>'
+          + '<path d="M6 2.75 V13.25" stroke="currentColor" stroke-width="1.4"/></svg>'
+          + '<span>\u4f1a\u8bdd</span>';
+
+        // Mounted inside the composer's own column so it is positioned by the same
+        // flow that positions the input. A fixed overlay would have to know the
+        // composer's height and the keyboard state to stay put; a flow sibling above
+        // it simply inherits both.
+        const mountPoint = document.querySelector("[class*='_composerSeat']");
+        if (mountPoint) {
+          mountPoint.insertBefore(handle, mountPoint.firstChild);
+        } else {
+          // No composer on this surface (a settings pane, say). Keep the control
+          // reachable rather than dropping it.
+          document.body.appendChild(handle);
+          handle.setAttribute("style", "position:fixed;top:8px;right:8px;z-index:50;");
+        }
 
         const scrim = document.createElement("div");
         scrim.id = SCRIM_ID;
@@ -289,15 +312,7 @@ window.__ModuleLoader__.load({
         window.addEventListener("resize", onResize);
         cleanups.push(() => window.removeEventListener("resize", onResize));
 
-        // ── the drawer handle ───────────────────────────────────────────────
-        // An explicit tap target, not an edge swipe.
-        //
-        // A swipe-in drawer was tried first and cannot work here: Android 10+
-        // reserves both screen edges for the back gesture, and the system consumes
-        // those touches before the page receives them. Reported from the device as
-        // a conflict with gesture navigation, which is exactly right -- the gesture
-        // was competing with the OS for the same 24px strip. A visible control has
-        // no such ambiguity and needs no discoverability hint.
+        // ── the sessions button ─────────────────────────────────────────────
         const onHandle = () => setOpen(!open);
         handle.addEventListener("click", onHandle);
         cleanups.push(() => handle.removeEventListener("click", onHandle));
