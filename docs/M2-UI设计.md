@@ -268,19 +268,105 @@ conversation.session.header.actions
 
 ## 7. 验收（客观，不靠肉眼）
 
-| # | 断言 | 现状 → 目标 |
-|---|---|---|
-| 1 | 画布宽度 / 视口宽度 | 0.874 → **1.00** |
-| 2 | 会话列表项可点高度 | 36px → **≥ 44px** |
-| 3 | 抽屉可达性 | — → 贴边右滑可唤出，`aria-expanded` 翻转 |
-| 4 | 键盘弹起时 composer 未被遮挡 | 已通过（`composerBottom 611 < 键盘顶 745`），**回归项** |
-| 5 | 手势条安全区 | `env(safe-area-inset-bottom)` 生效 |
+| # | 断言 | 现状 → 目标 | 结果 |
+|---|---|---|---|
+| 1 | 画布宽度 / 视口宽度 | 0.874 → **1.00** | ✅ 1.000 |
+| 2 | 抽屉内可点控件最小尺寸 | 36px → **≥ 44px** | ✅ 0 个低于 44px |
+| 3 | 贴边右滑唤出抽屉 | — | ✅ `open` 翻转、抽屉入屏 |
+| 4 | 点遮罩收起 | — | ✅ 关合、遮罩失活 |
+| 5 | Esc 收起 | — | ✅ 关合 |
+| 6 | 键盘弹起时 composer 未被遮挡 | 已通过，**回归项** | ✅ |
+| 7 | 左右留白对称 | 56 / 10 → 对称 | ✅ 画布满宽后自然居中 |
 
-判据用 CDP 断言 + 真机截图，沿用 M1 的做法（`tools/cdp-eval.mjs`）。
+判据用 CDP 断言 + 真机截图（`tools/cdp-eval.mjs` + `tools/cdp-drawer-shot.mjs`），
+最终一套断言在**装好的 APK** 上跑出 `pass: true`。
 
 ---
 
-## 8. 已知约束与不做的事
+## 9. 实现记录：三个只有实测才会发现的事实
+
+按踩坑顺序，每条都是"看代码看不出来、只有量了才知道"。
+
+### 9.1 这个界面本来就有移动断点，而且比我的 560px 更激进
+
+`dsh-client-ui-layout` 里写着：
+
+```js
+const SIDEBAR_AUTO_COLLAPSE = 1024;
+const narrow = viewport < SIDEBAR_AUTO_COLLAPSE;
+const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0;
+```
+
+**1024px 以下侧栏一律折成图标轨**，除非 `narrowExpanded` 为真。而它由一个既有 action 翻转：
+
+```js
+if (d.layoutInfo.viewportWidth < 1024) d.layoutInfo.narrowExpanded = !d.layoutInfo.narrowExpanded;
+```
+
+暴露为客户端服务 `ctx.layout.toggleSidebar()`。
+
+**这一条是整个 M2 的关键。** 我最初只把抽屉的宽度改成 320px —— 截图上抽屉确实滑进来了，
+但里面**还是那条 56px 的图标轨、`regionArea` 依旧只放图标**。
+因为"宽 320px"和"渲染成列表"是两件事：后者由 `narrowExpanded` 决定。
+
+所以插件必须 `inject: ["layout"]` 并在开合时调用 `toggleSidebar()`。
+**没有这一步，抽屉只是把同一个不可用的东西搬了个位置。** 这也是 `inject` 从 `[]` 改成 `["layout"]` 的原因。
+
+### 9.2 这个元素上的 `transform` 是死的，`left` 是活的
+
+抽屉最初用 `transform: translateX(-102%)` + 属性选择器做开合。实测：
+
+- 规则解析正常、选择器命中、`!important` 在位、没有被任何东西压过；
+- 但渲染出来的矩阵**一动不动** —— 连**内联 `!important` 的 transform** 也一样，关掉 transition 也一样；
+- 同一个元素上 `left` 立刻生效。
+
+改用 `left` 后立即可用。**不要"顺手简化"回 transform。**
+
+### 9.3 两条同权 `!important` 规则，浏览器一直选"关"那条
+
+这是卡最久的一条。开合最终改成：
+
+- **样式表负责停靠**（静态 `left:-320px`）—— 静态规则在首帧前就生效，而从 JS 写的内联偏移
+  **首次运行时没能落地，抽屉一开始是开着的**；
+- **JS 负责展开**（内联 `left:0px`）—— 内联 important 是全叠层最高来源，压得住样式表。
+
+中途试过"两条同权 `!important` 靠源码顺序决胜负"（基规则在前、开规则在后、探针确认顺序正确），
+浏览器仍然解析成关的那条。没有继续深挖根因：内联方案可预测、可解释，而且状态本来就是这个插件自己的布尔值。
+
+### 9.4 遮罩选择器写错了结构
+
+遮罩 append 到 `<body>`，是 frame **祖先的兄弟**，永远不是 frame 的后代。
+所以 `[class*='_frame'][open] #scrim` 命中不了任何东西 —— 实测确认元素存在、但开状态传不到。
+改用 `body:has([class*='_frame'][open]) #scrim`。现代 WebView 支持 `:has()`
+（真机 WebView 151）。
+
+### 9.5 侧栏自身是 56px 宽，不会因为容器变宽而变宽
+
+`sidebarCol` 的宽度是给桌面网格列用的，抽屉滑进来 320px，里面的根节点仍是 56px。
+需要 `[class*='_sidebarCol'] > *{width:100%!important}`，
+`regionArea` 才拿到 316px，列表才有地方铺开。
+
+---
+
+## 10. 交付物
+
+| 文件 | 作用 |
+|---|---|
+| `android/plugins/ui/package.json` | `dsh.client.platform = "web"`，声明 `./client` 导出 |
+| `android/plugins/ui/lib/index.js` | 宿主半边：空 `apply`（521 字节同款做法），只为让 Loader 编出客户端行 |
+| `android/plugins/ui/lib/client.js` | **全部实现**：手写 factory-CJS，零构建 |
+| `profile/android.patch.yml` §6 | `insert` 一行 `ui-mobile-shell` |
+| `tools/cdp-eval.mjs` | 单值求值，布局测量用 |
+| `tools/cdp-drawer-shot.mjs` | 贴边滑动唤出抽屉并在开启状态截图 |
+| `tools/cdp-connect.ps1` | 重连 DevTools socket（每次重启 pid 都变，内联写容易出错） |
+
+**没有任何上游包被修改，没有硬编码任何哈希类名**（只按 `_frame` / `_sidebarCol` / `_regionArea`
+这些下划线后的稳定片段匹配）。`left` 偏移是唯一写进元素的内联样式，并在
+`ctx.effect` 的清理函数里移除，所以热重载与卸载都不会留下痕迹。
+
+---
+
+## 11. 已知约束与不做的事
 
 - **不改上游包**，不碰哈希类名；
 - **不引入新配色 / 新字体** —— 那是和 38 个插件打架，不是设计；

@@ -162,13 +162,30 @@
     - id: ui-directory-picker-browse
       name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 
-# ── 6. Desktop integrations with no mobile equivalent ────────────────────────
+# ── 6. Mobile shell: the phone layout layer ──────────────────────────────────
+# The Web GUI is a desktop layout. At 443px it reserves a permanent 56px sidebar
+# (12.6% of the viewport) for a session list only 36px wide, and leaves content a
+# 56px left gutter against a 10px right one. Measured on the device.
+#
+# `@dsh-mobile/ui` is client-only -- its host half is an empty `apply` that exists
+# solely so the Loader composes a client row for it, exactly like
+# `dsh-client-ui-directory-picker-browse`. It gives the canvas the full viewport,
+# moves the sidebar into an edge-rail drawer, and lifts touch targets to 44px.
+#
+# Applied only below 560px, so a tablet or desktop viewport keeps upstream's
+# layout untouched. No upstream package is modified and no hashed class name is
+# pinned; see android/plugins/ui/lib/client.js for the full statement.
+- insert:
+    - id: ui-mobile-shell
+      name: '@dsh-mobile/ui'
+
+# ── 7. Desktop integrations with no mobile equivalent ────────────────────────
 # `open-in-app` resolves host applications from the desktop registry; on Android
 # "open with another app" is an Intent the native shell owns.
 - id: open-in-app
   disabled: !!js process.platform === 'android'
 
-# ── 7. Rows deliberately NOT touched ─────────────────────────────────────────
+# ── 8. Rows deliberately NOT touched ─────────────────────────────────────────
 # - `tool-bash` / `tool-pwsh` / `bash-sandbox` / `pwsh-sandbox`: the base layer
 #   already splits these on `process.platform`, and on Android that resolves to
 #   bash-on / pwsh-off, which is the correct mobile outcome. Overriding them

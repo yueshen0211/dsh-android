@@ -1,0 +1,27 @@
+{
+  "name": "@dsh-mobile/ui",
+  "version": "0.1.0",
+  "description": "Mobile shell for the DSH Web GUI: full-bleed canvas, edge-rail session drawer, phone-sized touch targets. Client-only; the host half is empty by design.",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js"
+  ],
+  "license": "MIT"
+}
