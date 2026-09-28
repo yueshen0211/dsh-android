@@ -26,7 +26,14 @@ param(
     [string] $VersionName   = '0.0.1',
     [int]    $VersionCode   = 1,
     [string] $Configuration = 'debug',
-    [string[]] $ExtraJniLibDirs = @()
+    [string[]] $ExtraJniLibDirs = @(),
+    # Which ABIs to package under lib/. Empty means "everything staged in
+    # jniLibs", which is what a dev build wants. A release names its ABIs
+    # explicitly so the shipping artifact does not depend on what happens to be
+    # staged in the working tree at the time -- both runtimes can be staged at
+    # once (the emulator needs x86_64), and silently shipping a 93 MB runtime
+    # for the wrong architecture is the kind of mistake worth designing out.
+    [string[]] $Abis = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -198,10 +205,31 @@ Pop-Location
 # `jar` cannot write entries into a subdirectory, so lib/<abi>/ entries are added
 # by a small zip pass that stores each .so uncompressed and mmap-able.
 $JniRoot = Join-Path $ModRoot 'src\main\jniLibs'
-if ((Test-Path $JniRoot) -or $ExtraJniLibDirs.Count -gt 0) {
+# Resolve the ABI filter into an explicit list of directories. The zip helper
+# names each abi after its directory basename, so pointing it at a staged
+# `jniLibs/<abi>` directory is all that is needed.
+$JniDirs = @()
+if ($Abis.Count -gt 0) {
+    foreach ($abi in $Abis) {
+        $dir = Join-Path $JniRoot $abi
+        if (-not (Test-Path $dir)) {
+            $staged = if (Test-Path $JniRoot) { (Get-ChildItem $JniRoot -Directory | ForEach-Object Name) -join ', ' } else { '(none)' }
+            throw "abi '$abi' is not staged at $dir (staged: $staged). Run .\tools\m1\stage-runtime.ps1 -Abi $abi"
+        }
+        $JniDirs += $dir
+    }
+    Write-Host "   abis       : $($Abis -join ', ')" -ForegroundColor Cyan
+} else {
+    foreach ($d in (Get-ChildItem $JniRoot -Directory -ErrorAction SilentlyContinue)) { $JniDirs += $d.FullName }
+}
+$JniDirs += $ExtraJniLibDirs
+
+if ($JniDirs.Count -gt 0 -or $ExtraJniLibDirs.Count -gt 0) {
     Write-Host "== native libs ==" -ForegroundColor Cyan
     $zipHelper = Join-Path $PSScriptRoot 'zip-add-nativelibs.mjs'
-    & node $zipHelper $UnsigedApk $JniRoot @ExtraJniLibDirs
+    # Pass a non-existent jniRoot so only the resolved directories are used; the
+    # helper treats an unreadable root as "no jniLibs".
+    & node $zipHelper $UnsigedApk (Join-Path $BuildDir 'no-such-jni-root') @JniDirs
     if ($LASTEXITCODE -ne 0) { throw "native lib packaging failed ($LASTEXITCODE)" }
 }
 

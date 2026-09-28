@@ -273,6 +273,10 @@ Two environment details matter, and both are handled by `tools/android-env.ps1`:
 
 Output: `android/app/build/cli-debug/dsh-debug.apk` (~233 MB with both ABIs, ~140 MB with one).
 
+Pass `-Abis arm64-v8a` (or `x86_64`) to package exactly one runtime. That is how releases are
+built, so the shipping artifact does not depend on which ABIs happen to be staged in the working
+tree — both usually are, because the emulator needs `x86_64` while phones need `arm64-v8a`.
+
 ### Why not Gradle
 
 Gradle's daemon cannot start in this environment (`Couldn't open current thread, error = 5`, from

@@ -167,10 +167,7 @@ engine-state.txt:  status=running
 **因此再次遇到"卡住"时，屏幕上会直接显示引擎走到哪一步** —— 不需要连电脑。
 这也顺带区分了两种此前无法分辨的情况：引擎**从未就绪** vs **就绪后又退出**。
 
-**Releases 里的 arm64 APK 已更新为含此改进的版本**：
-`sha256:ac7179054e8032d449290ecdcdeab4dae1fa19719b8dee35b0059eca79ce58cd`
-
-## 回来后的第一步
+## 若仍怀疑是「卡住」类问题
 
 手机插上 USB、允许 USB 调试，重新装一次最新 APK（**必须重装**，旧版没有上面的诊断），然后：
 
@@ -186,36 +183,54 @@ $adb="$env:ANDROID_HOME\platform-tools\adb.exe"
 
 ## 若修复后要发新版本
 
+`-Abis` 就是为这件事加的：以前要先手工 `Remove-Item jniLibs\x86_64` 再构建，
+容易发错架构的包；现在在命令行上声明，构建脚本会检查该 ABI 是否已 stage，
+缺失时报错并列出实际已 stage 的 ABI。
+
 ```powershell
 . D:\Work\DSHapk\tools\android-env.ps1
-# 精简为 arm64-only（真机不需要 x86_64 那 93 MB）
-Remove-Item android\app\src\main\jniLibs\x86_64 -Recurse -Force
+# 只打包 arm64（真机不需要 x86_64 那 93 MB）
 & .\tools\build-apk-cli.ps1 -ProjectDir android -Module app -PackageName dev.dsh.mobile `
-    -MinSdk 29 -TargetSdk 35 -Label 'DeepSeek Harness' -VersionName '0.1.0' -VersionCode 1
+    -MinSdk 29 -TargetSdk 35 -Label 'DeepSeek Harness' -VersionName '0.1.0' -VersionCode 1 `
+    -Abis arm64-v8a
+# 不需要动 jniLibs，x86_64 原样留着给模拟器用
+Copy-Item android\app\build\cli-debug\dsh-debug.apk `
+    .m1\release\dsh-android-0.1.0-m1-arm64-v8a-debug.apk -Force
 . .\tools\gh-env.ps1
 & gh release upload v0.1.0-m1 <新APK> --repo yueshen0211/dsh-android --clobber
-# 恢复 x86_64 以便继续用模拟器
-. tools\m1\stage-runtime.ps1 -Abi x86_64
 ```
 
 ### 关于「双 ABI 安装包」
 
-**现在磁盘上没有双 ABI 的 APK** —— 做 arm64 精简版时 `jniLibs\x86_64` 被删后重新构建，
-把 232.8 MB 那个覆盖了。要重建只需先 `. tools\m1\stage-runtime.ps1 -Abi x86_64` 再构建，
-产物约 232.8 MB（两套运行时都在，同一个包真机与模拟器都能装）。
+**磁盘上没有双 ABI 的 APK** —— 它只在构建时存在（`-Abis` 不传即打包 jniLibs 下全部 ABI，
+约 232.8 MB，同一个包真机与模拟器都能装）。要拿到它就**不传 `-Abis`**：
+
+```powershell
+& .\tools\build-apk-cli.ps1 ... # 不加 -Abis
+```
+
+前提是两套运行时都已 stage（`-Abi arm64-v8a` 与 `-Abi x86_64` 各跑一次）。
+
+### 当前发布资产
+
+**`sha256:3315d862d5cf68a7c590d78205353cc88d40e41134e7c174f02cbbbe4f9105cb`**
+—— 含 host + client 两半修复，真机冷启动实测通过（详见下方"发布用的 arm64-only 构建"）。
+
+（历史：`e97c7d60…` 是只有 host 半修复的版本，工作区按钮仍点不动，已被覆盖。）
 
 ---
 
 | 项 | 状态 |
 |---|---|
 | 日期 | 2026-09-28 |
-| 当前里程碑 | **M1 完成 —— 完整 DSH GUI 在 x86_64 模拟器上端到端验证通过** |
-| 仓库 | **https://github.com/yueshen0211/dsh-android**（public，4 个提交） |
+| 当前里程碑 | **M1 完成 —— 完整 DSH GUI 在 arm64 真机与 x86_64 模拟器上均端到端验证通过** |
+| 仓库 | **https://github.com/yueshen0211/dsh-android**（public） |
 | 发布 | **https://github.com/yueshen0211/dsh-android/releases/tag/v0.1.0-m1**（pre-release） |
-| APK | Releases 里是 **arm64-only 140.2 MB**；本地当前构建也是 arm64-only（双 ABI 版已被覆盖，可重建） |
-| 真机 | `ZS22224CG6`（Android 16 / arm64-v8a）—— **卡在启动页，待取日志** |
+| APK | Releases 里是 **arm64-only ~140 MB**（本轮需重新构建覆盖，见上） |
+| 真机 | `ZS22224CG6`（Android 16 / arm64-v8a）—— **✅ 通过**：引擎就绪、UI 完整、工作区选择器可用 |
 | 模拟器 | `dsh-test`（Android 14 / **x86_64**），WHPX 加速，带窗口 —— 已验证通过 |
-| arm64 镜像 | `system-images;android-34;google_apis;arm64-v8a`，下载中/已装 |
+| arm64 镜像 | `system-images;android-34;google_apis;arm64-v8a` 已下载，但**本机跑不起来**（跨架构，见上文） |
+| 未验证 | **完整对话流程**（发消息 → 模型回复），需要一个 DeepSeek API key |
 
 ---
 
@@ -251,26 +266,43 @@ gh release upload v0.1.0-m1 <文件> --repo yueshen0211/dsh-android --clobber
 
 ### 发布用的 arm64-only 构建
 
-Releases 里的 APK 只含 arm64-v8a（140.2 MB），因为真机不需要 x86_64 那 93 MB：
+Releases 里的 APK 只含 arm64-v8a（140.2 MB），因为真机不需要 x86_64 那 93 MB。
+用 `-Abis` 声明，**不要**再去手工删 `jniLibs\x86_64`：
 
 ```powershell
-Remove-Item android\app\src\main\jniLibs\x86_64 -Recurse -Force   # 精简
 . tools/android-env.ps1
 . tools\build-apk-cli.ps1 -ProjectDir android -Module app -PackageName dev.dsh.mobile `
-    -MinSdk 29 -TargetSdk 35 -Label 'DeepSeek Harness' -VersionName '0.1.0' -VersionCode 1
-# 之后若要跑模拟器，重新 stage：
-. tools\m1\stage-runtime.ps1 -Abi x86_64
+    -MinSdk 29 -TargetSdk 35 -Label 'DeepSeek Harness' -VersionName '0.1.0' -VersionCode 1 `
+    -Abis arm64-v8a
 ```
 
-GitHub 侧计算的资产摘要与本地 `SHA256SUMS.txt` 一致：
-`facf34888ec75993a527bb388f6668e7158266b23ba39eab1850a0b4e5298ec6`
+`-Abis` 会校验该 ABI 是否已 stage，缺失时报错并列出实际已 stage 的 ABI，
+所以不会再出现"以为发了 arm64、其实发了别的架构"这种情况。
+
+判据：**GitHub 侧计算的资产摘要必须与本地 `SHA256SUMS.txt` 一致**，不一致就是上传没生效。
+
+### 本轮发布的 arm64 资产（已实测）
+
+```
+sha256:3315d862d5cf68a7c590d78205353cc88d40e41134e7c174f02cbbbe4f9105cb
+```
+
+已验证：APK 内 `lib/` 只有 `arm64-v8a`（11 个 `.so`）、
+`assets/engine/android.patch.yml` 与仓库里的 `profile/android.patch.yml` 逐字节一致、
+`@deepseek-ai/dsh-client-ui-directory-picker-browse` 已打包。
+
+**真机 `pm clear` 后从零冷启动实测通过**：74 秒（含完整资产解包）→ `status=running` →
+内测声明 → API key 对话框 → 工作区首次选择（浏览对话框 → 进入 `workspace` → 打开）→
+chip 显示 `workspace`、输入框就绪。**这条路径覆盖的是用户第一次安装后的真实经历。**
 
 ---
 
 ## 一句话现状
 
-**跑通了。** 模拟器截图确认：DSH 界面完整渲染，弹出「Add an API key to get started」，
-左侧栏图标齐全，WebSocket 连接稳定（`connection lost: 0`），引擎常驻。
+**跑通了，真机与模拟器都是。** 真机（arm64 / Android 16）截图与 DOM 双重确认：
+DSH 界面完整渲染、引擎 `status=running`、**工作区选择器可用**
+（点开面板 → 「添加工作区…」→ 目录浏览对话框列出真实目录并能逐级进入）。
+模拟器（x86_64 / Android 14）同样通过。
 
 错误统计全部归零：
 
@@ -279,7 +311,9 @@ Iterator: 0   AbortSignal.any: 0   Promise.withResolvers: 0
 connection lost: 0   未捕获错误: 0   插件加载失败: 0   引擎退出: 0
 ```
 
-## 本轮修掉的 4 个「卡在 starting」根因
+唯一未做的是**完整对话流程**（发消息 → 模型回复），需要一个 DeepSeek API key。
+
+## 本轮修掉的「卡在 starting」根因
 
 按发现顺序，**前两个是用户真机上卡住的直接原因**：
 
