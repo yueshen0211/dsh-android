@@ -6,9 +6,28 @@
 |---|---|
 | 日期 | 2026-09-28 |
 | 当前里程碑 | **M1 完成 —— 完整 DSH GUI 在模拟器里跑起来了（端到端验证通过）** |
+| 仓库 | **https://github.com/yueshen0211/dsh-android**（已推送，43 文件） |
 | APK | `android\app\build\cli-debug\dsh-debug.apk`，**232.8 MB（双 ABI），已签名** |
 | 真机 | `ZS22224CG6`（Android 16 / arm64-v8a）—— **需重装新 APK**（旧版有下面的跨进程 bug） |
 | 模拟器 | `dsh-test`（Android 14 / **x86_64**），WHPX 加速，带窗口 |
+
+---
+
+## 仓库与推送方式
+
+已推送到 **https://github.com/yueshen0211/dsh-android**（public）。
+
+推送用的是 Windows 凭据管理器里已存的 GitHub OAuth token（`gho_`，scopes: `gist, repo, workflow`）。
+`credential.helper=manager` 来自**系统级**配置，未改动；仓库本地也没有覆盖它，所以以后正常
+`git push` 即可。
+
+> 注意：本机 `~/.ssh/id_ed25519` **未在 GitHub 授权**（`Permission denied (publickey)`）。
+> 想用 SSH 的话需要先把这把公钥加到账号里：
+> `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILo1bUwJTeIAsX/HzRf1jlpeDuoY2IsuPhGkG3/nJJ2s yue@DESKTOP-SNLOA2S`
+
+**仓库里没有**（已在 `.gitignore` 排除，全部可由脚本重建）：`.toolchain/`（17 GB 工具链）、
+`assets/engine/`（DSH 依赖树）、`jniLibs/*/`（Node 运行时）、`android/app/build/`、
+以及 `.m0/` `.m1/` `.smoke/` 这些临时工作区。提交前做过密钥扫描：无凭据。
 
 ---
 
