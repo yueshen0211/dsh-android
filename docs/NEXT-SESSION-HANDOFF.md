@@ -4,26 +4,95 @@
 
 ---
 
-# ⏸ 从这里继续（RESUME HERE）
+# ✅ arm64 真机验证：完全通过（含完整对话流程）
 
-**arm64 真机验证已通过**（见本节末尾），当前进入 M2 前的收尾与文档同步。
-
-## 真机验证结果：✅ 通过
-
-真机 `ZS22224CG6`（XT2537-4 / Android 16 / arm64-v8a）上完整跑通：
+**没有待办阻塞项了。** 真机 `ZS22224CG6`（XT2537-4 / Android 16 / arm64-v8a）上：
 
 ```
-dsh web: http://127.0.0.1:44033/?token=…
-engine ready on port 44033
 engine-state.txt: status=running
 未捕获错误 0   插件加载失败 0   引擎退出 0
 ```
 
-界面完整：工作区选择器、输入框、`完全权限` / `DeepSeek-V41-Flash` / `High` 等控件齐全，
-工作区已选中并显示为 `files ⌄`。
+**发一条真实消息 → 拿到模型回复**，会话日志落盘：
 
-**arm64 架构本身从未有问题** —— 之前真机"卡在 starting"的原因是下面两个
-profile bug，与架构无关。（arm64 模拟器路线已确认不可行，见下文。）
+```
+问：用一句话说明你是谁
+答：我是 DeepSeek Harness 里的编码智能体，由 deepseek-flash 模型驱动，
+    可以帮你读代码、改文件、跑命令和查资料。
+    1 轮 1 步 · 213 tok/s · 8.2K tok
+
+files/dsh-home/sessions/--data-data-dev.dsh.mobile-files-workspace--/session-69456a97-…/
+    session.lock               ← flock shim 建出来的
+    session.v3.jsonl.zstd      ← link → renameat2 发布出来的
+```
+
+界面完整：工作区选择器（可选、可浏览目录）、输入框、`完全权限` / `DeepSeek-V41-Flash` / `High` 齐全。
+
+**arm64 架构本身从未有问题** —— 之前真机的每一次失败，根因都是下面这些平台差异，
+没有一条与架构有关。（arm64 模拟器路线已确认不可行，见下文。）
+
+## 本轮修掉的两个「每次运行都失败」的平台拒绝
+
+这两个都在**会话路径**上，所以它们不是"某个功能降级"，而是**每一次 agent 运行都直接失败**。
+两个都做到了不 fork 上游包。
+
+### 一、`flock(2)`：上游按 platform 拒绝，且没有 android 预编译
+
+```
+本轮运行失败  flock is not supported on android-arm64
+```
+
+`dsh-session-persistence-jsonl` 在每个会话目录的 `session.lock` 上取非阻塞排他锁，
+时机是"创建出来的会话第一次落盘之前"。而 `@deepseek-ai/node-addon-system/flock` 在碰到内核之前
+就按平台拒绝了 —— Node 在这里报 `process.platform === 'android'`，而它只接受 `linux` / `darwin`：
+
+```js
+if (platform !== 'linux' && platform !== 'darwin') throw … ERR_FLOCK_UNSUPPORTED_PLATFORM
+```
+
+它的 optionalDependencies 只有 linux/darwin，**根本没有 android 包**。
+
+**修法**：`android/shims/node-addon-system/` 整个替换该包，用 **Koffi** 调 bionic libc 的 `flock`。
+Koffi 本来就在引擎树里（koffi 自己的 FFI），所以不需要任何原生构建。
+
+**这是真锁，不是 stub**。上游的 browser worker 把 flock stub 成立即成功（因为它单进程），
+这里让内核真的做锁。设备实测：同一 inode 上第二个 fd 得到 `EAGAIN`（errno 11），
+关掉持有者后能再次取得 —— 与上游 `isLockContention` 判据完全一致。
+
+因为整个包被替换，上游 `landlock-run` 那一半**原样保留**：`dsh-sandbox-local` 静态 import 它，
+而它的 `probe()` 对缺失二进制本来就返回 `unusable`，在 Android 上正是正确答案。
+
+### 二、`link(2)`：Android 在应用存储里拒绝硬链接
+
+flock 修好后，紧接着暴露第二个：
+
+```
+EACCES: permission denied, link '…/session.v3.jsonl.zstd.<rand>.tmp'
+                              -> '…/session.v3.jsonl.zstd'
+```
+
+**Android 对应用存储里的硬链接一律拒绝，目标不存在也一样**，所以这不是竞争/碰撞问题。
+同目录的 `rename()` 能成功，但它**会覆盖** —— 而这正是当初选 `link` 要避免的：
+`link` 就是那个"原子且不覆盖"的发布动作，`rejectExistingLog` 只是更便宜的前置检查。
+
+**修法**：`renameat2(RENAME_NOREPLACE)` —— 同样的事，不需要硬链接。
+设备实测：新目标发布成功（内容完整、临时名被消耗）；目标已存在则 `EEXIST`（errno 17）
+且目标内容原封不动。
+
+**这个没法用换包解决**，因为调用点是 Node 内建模块的解构导入。属性打补丁也不行，
+原因值得记住：
+
+> **ESM 对内建模块的具名导入是快照，不是活绑定。**
+> 执行 `require('node:fs/promises').link = ours` 之后，
+> 重新 `import('node:fs/promises')` 也好、解构 `const { link } = …` 也好，
+> **拿到的都还是原函数**；只有 CJS 那个对象报告已打补丁。设备实测确认。
+
+所以修法是 **preload**：`android/support/android-fs/register.mjs` 注册一个进程内 load hook，
+在那个模块加载时改写它那一行 import，同时保留它从 `node:fs/promises` 取的其他所有绑定。
+`EngineRuntime` 用绝对路径 `--import` 传进去；该模块放在 `node_modules` 下，才能解析到 Koffi。
+
+**这条也解释了为什么不能用 `module.register()`**：Node 26 上它已废弃，而且进程内
+`registerHooks()` 对"只做一次字符串改写"来说更合适。
 
 ## 本轮修掉的 bug：工作区打不开（两个叠加原因）
 

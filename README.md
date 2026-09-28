@@ -160,6 +160,58 @@ the provider; do not delete the row.
   script renames that file, rewrites its importers, and **fails the build** if any dot-prefixed
   import remains.
 
+### Android refuses two POSIX calls the session store depends on
+
+Both are in the session path, so before they were fixed *every* agent run failed on the phone — not
+a degraded feature but a total one. Both were replaced without forking an upstream package.
+
+**`flock(2)`.** `dsh-session-persistence-jsonl` takes a non-blocking exclusive lock on each session
+directory's `session.lock`, immediately before a created session's first materializing write. The
+upstream entry refuses before it ever reaches the kernel:
+
+```
+flock is not supported on android-arm64
+```
+
+because Node reports `process.platform === 'android'` there and the guard accepts only `linux` and
+`darwin`, and upstream ships no android prebuild (its optional dependencies are linux/darwin only).
+Bionic *does* implement `flock`, and the engine tree already carries Koffi — a working Android arm64
+FFI — so [`android/shims/node-addon-system/`](android/shims/node-addon-system/) replaces the package
+with one that calls libc through Koffi.
+
+It is a real lock, not a stub. Upstream's browser worker stubs this call to immediate success
+because it is single-process; here the kernel does the work, verified on device: a second descriptor
+on the same inode rejects with `EAGAIN`, and closing the holder releases it. The shim replaces the
+whole package, so upstream's `landlock-run` half is kept verbatim — `dsh-sandbox-local` imports it
+statically, and its `probe()` already reports `unusable` for a missing binary, which is the correct
+verdict on Android.
+
+**`link(2)`.** With the lock fixed, the next failure was the session log publish:
+
+```
+EACCES: permission denied, link '.../session.v3.jsonl.zstd.<rand>.tmp' -> '.../session.v3.jsonl.zstd'
+```
+
+Android denies hardlinks in app storage **for any destination, including one that does not exist**,
+so this is not a collision race. `rename()` in the same directory succeeds — but it clobbers, which
+is exactly the hazard `link` was chosen to avoid: it *is* the atomic, no-overwrite publish, with the
+existing-file check only a cheaper pre-check. `renameat2(RENAME_NOREPLACE)` is the same operation
+without a hardlink, so [`android/support/android-fs/`](android/support/android-fs/) calls it through
+Koffi.
+
+That one cannot be a package swap, because the call site is a destructured import of a Node builtin.
+Property-patching does not work either, and the reason is worth knowing:
+
+> **An ESM named import from a builtin is a snapshot, not a live binding.** After
+> `require('node:fs/promises').link = ours`, both a fresh `import('node:fs/promises')` and a
+> destructured `const { link } = …` still reported the *original* function, while the CJS object
+> reported the patch. Verified on device.
+
+So the correction is a preload: `register.mjs` installs an in-process load hook that rewrites that
+single import as the module loads, preserving every other binding it takes from `node:fs/promises`.
+`EngineRuntime` passes it as an absolute `--import` path, and the module lives under `node_modules`
+so it can resolve Koffi.
+
 ### The UI lives in a different process from the engine
 
 `EngineService` runs in `:engine`; the activity runs in the main process. Sharing state through a
@@ -430,21 +482,21 @@ The engine boots with the overlay applied, prints its URL, and completes the bro
 (`303` + HttpOnly cookie, `401` without, `200` with). Node capability baseline confirmed:
 `node:sqlite`, `worker_threads`, `child_process`, WebCrypto, `fetch`, `AbortSignal.timeout`.
 
-**M1 — installable APK: working, verified on a real arm64 phone and on an x86_64 emulator.**
+**M1 — installable APK: working, verified end to end on a real arm64 phone and on an x86_64
+emulator.**
 
 On the arm64 phone (Motorola XT2537-4, Android 16): engine ready in ~24 s warm, cold start from a
-wiped install ~74 s including the full asset unpack; full GUI rendered; workspace picker works
-end to end. On Android 14 (emulator, x86_64): engine ready in ~10 s. Every error counter at zero on
-both:
+wiped install ~74 s including the full asset unpack; full GUI rendered; workspace picker works end
+to end; **a real prompt returns a model reply**, with the session log published to disk. On
+Android 14 (emulator, x86_64): engine ready in ~10 s. Every error counter at zero on both:
 
 ```
 Iterator: 0   AbortSignal.any: 0   Promise.withResolvers: 0
 connection lost: 0   uncaught: 0   plugin import failures: 0   engine exits: 0
 ```
 
-The arm64 result was the open question, and it is now closed — including the three bugs that made
-the phone stall on "starting the DSH engine" while the emulator looked fine. None of them were
-architecture-related:
+The arm64 result was the open question, and it is now closed — including the bugs that made the
+phone fail while the emulator looked fine. None of them were architecture-related:
 
 1. **A patch entry may only change `config` or `disabled`.** Trying to swap a row's package by
    patching its `name` is dropped with a warning, so the original provider still loads and still
@@ -454,6 +506,10 @@ architecture-related:
 3. **Disabling a row can remove more than its service.** `dsh-host-directory-picker-auto` mounts a
    *paired client plugin* at runtime; disabling it left the workspace button rendered but inert,
    with nothing logged.
+4. **Two POSIX calls the platform refuses**, both in the session store, so both broke *every* run
+   rather than one feature: `flock(2)`, which upstream's entry rejects by platform before reaching
+   the kernel, and `link(2)`, which Android denies in app storage for any destination. See
+   [The hard parts](#the-hard-parts) for how each was replaced without forking anything.
 
 Because a cable should not be required to diagnose the next one, the app also reports its own
 progress:
@@ -466,9 +522,9 @@ progress:
 Two outcomes that used to look identical are now distinguishable: the engine *never became ready*
 versus it *became ready and then exited*.
 
-**What is not verified: a full conversation.** Sending a message and getting a model reply needs a
-DeepSeek API key. The UI, engine, plugin tree, workspace selection and attachment provider are all
-exercised; the model round trip is not.
+**What is still not verified:** image attachments end to end with a real picture, and the shell
+tools (the shipped `web` profile mounts no terminal row and disables both). Neither blocks normal
+use; both are covered in [Limitations](#limitations).
 
 ---
 
