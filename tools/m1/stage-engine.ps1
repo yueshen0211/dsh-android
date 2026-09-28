@@ -121,6 +121,14 @@ Write-Host "  dot-prefixed import check: clean"
 $pluginSource = Join-Path $script:M1Workspace 'android\plugins'
 if (Test-Path $pluginSource) {
     Get-ChildItem $pluginSource -Directory | ForEach-Object {
+        # A malformed plugin stylesheet fails silently in a browser -- it drops the
+        # rules after the unbalanced brace and reports nothing -- so it is checked
+        # here, before an APK exists. See tools/check-plugin-css.mjs.
+        $clientBundle = Join-Path $_.FullName 'lib\client.js'
+        if (Test-Path $clientBundle) {
+            & node (Join-Path $script:M1Workspace 'tools\check-plugin-css.mjs') $clientBundle
+            if ($LASTEXITCODE -ne 0) { throw "plugin CSS check failed for $($_.Name)" }
+        }
         $scopeDir = Join-Path $modules '@dsh-mobile'
         New-Item -ItemType Directory -Force -Path $scopeDir | Out-Null
         $target = Join-Path $scopeDir $_.Name

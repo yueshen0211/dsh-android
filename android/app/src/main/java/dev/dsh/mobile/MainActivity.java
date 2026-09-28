@@ -304,6 +304,9 @@ public class MainActivity extends Activity {
                 // place for the app bundle and for every lazily loaded plugin
                 // bundle. See WebViewPolyfills for why they are needed at all.
                 webView.evaluateJavascript(WebViewPolyfills.SOURCE, null);
+                // The viewport meta must request cover or the platform safe-area
+                // insets are not honoured and content renders under the camera.
+                webView.evaluateJavascript(WebViewPolyfills.VIEWPORT_FIT, null);
             }
 
             @Override

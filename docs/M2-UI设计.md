@@ -185,17 +185,22 @@ boldness 只花在一处（见 §4）。
 
 ## 4. 原则：boldness 只花在一处
 
-**唯一的记忆点 = 贴边轨道（edge rail）。**
+**唯一的记忆点 = 左下角那颗会话手柄。**
 
-一条 6px 宽、全高的热区贴在屏幕左缘，带一条 `currentColor` 派生的细线作为抓握暗示。
-任意位置右滑唤出会话抽屉，左滑或点遮罩收起。
+一个 44×44 的圆形手柄，贴在屏幕左下角（拇指自然落点），带一枚 `currentColor` 描边的箭头。
+点它唤出会话抽屉，点遮罩、按 Esc、或点抽屉里的条目收起。抽屉开启时手柄淡出。
 
 为什么是它：
 
 1. **它直接解决最痛的问题** —— 会话列表从 36px 宽的不可用状态，变成 320px 的可读抽屉，
    同时把画布从 87.4% 还给 100%；
-2. **它是手机特有的手势**，不是把桌面侧栏缩小 —— 桌面没有"边缘滑动"这个语汇；
-3. 它**不需要新配色**，只借 `currentColor` 与既有描边色，因此不会和 38 个插件打架。
+2. 它**不需要新配色**，只借 `currentColor` 与既有描边色，因此不会和 38 个插件打架；
+3. 它**不与系统手势竞争**（见下）。
+
+> **原设计是"贴边轨道 + 右滑"，已废弃。** Android 10+ 把屏幕左右边缘留给系统返回手势，
+> 系统在手势区内先于页面拿到触摸事件，所以边缘滑动唤出抽屉必然与手势导航冲突 ——
+> 这是在真机上被用户直接指出的。改成显式按钮后没有歧义，也不需要可发现性提示。
+> 详见 §9.6。
 
 其余一切保持安静：不加渐变、不加动效装饰、不加第二强调色。
 **动效只用于回应人的动作**（抽屉开合、键盘升降），不做入场动画 ——
@@ -272,7 +277,7 @@ conversation.session.header.actions
 |---|---|---|---|
 | 1 | 画布宽度 / 视口宽度 | 0.874 → **1.00** | ✅ 1.000 |
 | 2 | 抽屉内可点控件最小尺寸 | 36px → **≥ 44px** | ✅ 0 个低于 44px |
-| 3 | 贴边右滑唤出抽屉 | — | ✅ `open` 翻转、抽屉入屏 |
+| 3 | **点手柄**（原设计为贴边右滑）唤出抽屉 | — | ✅ `open` 翻转、抽屉入屏 |
 | 4 | 点遮罩收起 | — | ✅ 关合、遮罩失活 |
 | 5 | Esc 收起 | — | ✅ 关合 |
 | 6 | 键盘弹起时 composer 未被遮挡 | 已通过，**回归项** | ✅ |
@@ -341,6 +346,79 @@ if (d.layoutInfo.viewportWidth < 1024) d.layoutInfo.narrowExpanded = !d.layoutIn
 （真机 WebView 151）。
 
 ### 9.5 侧栏自身是 56px 宽，不会因为容器变宽而变宽
+
+`sidebarCol` 的宽度是给桌面网格列用的，抽屉滑进来 320px，里面的根节点仍是 56px。
+需要 `[class*='_sidebarCol'] > *{width:100%!important}`，
+`regionArea` 才拿到 316px，列表才有地方铺开。
+
+### 9.6 左边缘手势与系统返回手势冲突（用户实测反馈）
+
+第一版用"贴边 6px 轨道 + 右滑"唤出抽屉。**这在 Android 上根本行不通**：
+Android 10+ 把屏幕左右边缘留给系统返回手势，系统在手势区内**先于页面**拿到触摸事件。
+用户反馈"会和手势导航冲突"——准确，我的手势是在和 OS 抢同一条 24px 带。
+
+改为**显式按钮**：底部左侧 44×44 的圆形手柄（拇指区内），带 `aria-label`，
+开抽屉时淡出。不再有手势歧义，也不需要"可发现性"提示。
+
+### 9.7 输入框跑到摄像头位置：是我把高度链打断了
+
+用户反馈"输入框太靠上，都到摄像头部位了"。根因是我把 `_frame` 从 `grid` 覆盖成 `display:block`，
+于是 `_centerCol` 不再是网格项、`flex:1` 失效 —— 它的高度塌成内容高度（实测 **238px / 985px**），
+composer 自然贴在顶部。
+
+修法是补回高度链并加上安全区：
+
+```css
+[class*='_frame']{display:flex!important;flex-direction:column!important;
+  height:100dvh!important;padding-top:env(safe-area-inset-top,0px)!important;}
+[class*='_centerCol']{flex:1 1 auto!important;min-height:0!important;}
+[class*='_composerSeat']{margin-top:auto!important;
+  padding-bottom:calc(env(safe-area-inset-bottom,0px) + 8px)!important;}
+```
+
+用 `100dvh` 而非 `100%`：动态单位会跟随软键盘与地址栏收缩。
+实测结果：composer 底边 **985 = 画布底边**（贴合底部），`_frame` 上边距 **48px**（让开摄像头）。
+
+### 9.8 安全区是 48px，但页面没有权利用它
+
+`env(safe-area-inset-top)` 在这台机器上**确实返回 48px**（摄像头挖孔），
+但服务端下发的 viewport meta 是 `width=device-width, initial-scale=1` —— **缺 `viewport-fit=cover`**，
+页面就没有义务遵守这些 inset，所以内容画到了摄像头下面。
+
+在 `WebViewPolyfills` 里补一个 meta 补丁（`MainActivity.onPageStarted` 注入），
+而不去改引擎树里的 `index.html`：这样服务端产物与上游保持逐字节一致 ——
+与本项目其他所有平台差异同一原则。
+
+### 9.9 一条被静默吞掉的 CSS 规则（最贵的一个）
+
+抽屉手柄一度完全不工作：`position` 计算值是 `static`、点击无反应。
+原因是 CSS 数组里 **composer 那条规则漏了一个 `}`**：
+
+```css
+[class*='_composerSeat']{margin-top:auto!important;
+padding-bottom:calc(...)!important;      ← 少了 }
+#dsh-mobile-ui-handle{position:fixed;...   ← 于是被吞进上一条规则
+```
+
+更糟的是 `@media` 块也一起被吞，**浏览器不报任何错**。
+（我在排查中还被自己的短横线正则误导过：它没匹配 `HANDLE_ID`，导致"检查通过"是假的。）
+
+现在有两道防线：
+
+- **构建期** `tools/check-plugin-css.mjs`（已接入 `stage-engine.ps1`）：
+  括号配平、每条规则可达、手柄规则存在且非 static、尺寸达 44px、抽屉不依赖 transform；
+  识别符按**各自声明的真实值**代入，所以检查的是真正会发布的那串 CSS；
+- **运行期** 插件把 CSSOM 实际解析出的规则数与源码声明数比对，不一致就 `console.error`。
+
+### 9.10 抽屉"开了立刻又关"：document 级点击处理
+
+手柄终于能点之后，抽屉仍然一闪即关。MutationObserver 显示属性**翻转了两次**。
+
+根因：`onSidebarClick`（"点抽屉里的会话后收起抽屉"）挂在 **`document`** 上，
+而手柄自己就是个 `button` —— 它的点击冒泡到 document 后命中 `closest('button')`，
+把刚打开的抽屉关掉了。改为把该监听挂在**侧栏元素**上，只有抽屉内部的控件能关它。
+
+**教训**：`document` 级的"点某类元素就做某事"很容易把触发它的那个控件也算进去。
 
 `sidebarCol` 的宽度是给桌面网格列用的，抽屉滑进来 320px，里面的根节点仍是 56px。
 需要 `[class*='_sidebarCol'] > *{width:100%!important}`，

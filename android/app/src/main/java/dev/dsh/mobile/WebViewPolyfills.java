@@ -186,4 +186,35 @@ final class WebViewPolyfills {
             + "    });\n"
             + "  } catch (e) { /* never let a polyfill failure block the page */ }\n"
             + "})();\n";
+
+    /**
+     * Request {@code viewport-fit=cover} on the served viewport meta.
+     *
+     * <p>The app runs edge-to-edge, so the WebView already reports real safe-area
+     * insets (measured on device: 48px top for the camera cutout, 24px bottom for
+     * the gesture bar). But the frontend's own tag is
+     * {@code width=device-width, initial-scale=1}, and without
+     * {@code viewport-fit=cover} the page is not obliged to honour those insets --
+     * so content rendered under the camera.
+     *
+     * <p>Patched here rather than by editing the engine tree, which keeps the served
+     * bundle byte-identical to upstream. That is the same reason every other
+     * platform difference in this project lives outside the packages.
+     */
+    static final String VIEWPORT_FIT =
+        "(function () {\n"
+        + "  try {\n"
+        + "    var m = document.querySelector('meta[name=\"viewport\"]');\n"
+        + "    if (!m) {\n"
+        + "      if (!document.head) { return; }\n"
+        + "      m = document.createElement('meta');\n"
+        + "      m.setAttribute('name', 'viewport');\n"
+        + "      document.head.appendChild(m);\n"
+        + "    }\n"
+        + "    var c = m.getAttribute('content') || 'width=device-width, initial-scale=1';\n"
+        + "    if (c.indexOf('viewport-fit') === -1) {\n"
+        + "      m.setAttribute('content', c + ', viewport-fit=cover');\n"
+        + "    }\n"
+        + "  } catch (e) { /* never let this block the page */ }\n"
+        + "})();\n";
 }
