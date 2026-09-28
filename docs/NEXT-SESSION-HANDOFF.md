@@ -6,28 +6,59 @@
 |---|---|
 | 日期 | 2026-09-28 |
 | 当前里程碑 | **M1 完成 —— 完整 DSH GUI 在模拟器里跑起来了（端到端验证通过）** |
-| 仓库 | **https://github.com/yueshen0211/dsh-android**（已推送，43 文件） |
-| APK | `android\app\build\cli-debug\dsh-debug.apk`，**232.8 MB（双 ABI），已签名** |
+| 仓库 | **https://github.com/yueshen0211/dsh-android**（public） |
+| 发布 | **https://github.com/yueshen0211/dsh-android/releases/tag/v0.1.0-m1**（pre-release） |
+| APK | Releases 里是 **arm64-only 140.2 MB**；本地 `android\app\build\cli-debug\dsh-debug.apk` 是双 ABI 232.8 MB |
 | 真机 | `ZS22224CG6`（Android 16 / arm64-v8a）—— **需重装新 APK**（旧版有下面的跨进程 bug） |
 | 模拟器 | `dsh-test`（Android 14 / **x86_64**），WHPX 加速，带窗口 |
 
 ---
 
-## 仓库与推送方式
+## 仓库、推送与发布
 
-已推送到 **https://github.com/yueshen0211/dsh-android**（public）。
+**仓库**：https://github.com/yueshen0211/dsh-android （public，43 文件）
+**发布**：https://github.com/yueshen0211/dsh-android/releases/tag/v0.1.0-m1 （pre-release，arm64 APK）
 
-推送用的是 Windows 凭据管理器里已存的 GitHub OAuth token（`gho_`，scopes: `gist, repo, workflow`）。
-`credential.helper=manager` 来自**系统级**配置，未改动；仓库本地也没有覆盖它，所以以后正常
-`git push` 即可。
+### 凭据情况（重要）
 
-> 注意：本机 `~/.ssh/id_ed25519` **未在 GitHub 授权**（`Permission denied (publickey)`）。
-> 想用 SSH 的话需要先把这把公钥加到账号里：
-> `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILo1bUwJTeIAsX/HzRf1jlpeDuoY2IsuPhGkG3/nJJ2s yue@DESKTOP-SNLOA2S`
+- **SSH 不可用**：本机 `~/.ssh/id_ed25519` 未在 GitHub 授权
+  （`Permission denied (publickey)`）。想改用 SSH 需先把这把公钥加到账号：
+  `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILo1bUwJTeIAsX/HzRf1jlpeDuoY2IsuPhGkG3/nJJ2s yue@DESKTOP-SNLOA2S`
+- **HTTPS 可用**：Windows 凭据管理器里存有 GitHub OAuth token（`gho_`，scopes: `gist, repo, workflow`）。
+  `credential.helper=manager` 来自**系统级**配置，未改动，正常 `git push` 即可。
+- **`gh auth login` 用不了**：它要求 `read:org` scope，而该 token 没有。
+  但通过 `GH_TOKEN` 环境变量注入就绕过这个校验，`gh release` / `gh api` 均正常。
 
-**仓库里没有**（已在 `.gitignore` 排除，全部可由脚本重建）：`.toolchain/`（17 GB 工具链）、
-`assets/engine/`（DSH 依赖树）、`jniLibs/*/`（Node 运行时）、`android/app/build/`、
-以及 `.m0/` `.m1/` `.smoke/` 这些临时工作区。提交前做过密钥扫描：无凭据。
+### 发布工具
+
+`gh` CLI 已装在工作区（`.toolchain\gh\`）。它必须用，不能只用 REST API：
+**GitHub 的 REST API 上传资产上限 100 MB**，而 APK 有 140 MB；`gh` 会分块上传。
+
+```powershell
+.\tools\install-gh.ps1        # 下载安装（一次性）
+. .\tools\gh-env.ps1          # 激活：从凭据管理器取 token 注入 GH_TOKEN（仅当前 shell）
+
+# 发布 / 更新资产
+gh release upload v0.1.0-m1 <文件> --repo yueshen0211/dsh-android --clobber
+```
+
+`gh-env.ps1` 不把 token 落盘、不打印、不进命令行。
+
+### 发布用的 arm64-only 构建
+
+Releases 里的 APK 只含 arm64-v8a（140.2 MB），因为真机不需要 x86_64 那 93 MB：
+
+```powershell
+Remove-Item android\app\src\main\jniLibs\x86_64 -Recurse -Force   # 精简
+. tools/android-env.ps1
+. tools\build-apk-cli.ps1 -ProjectDir android -Module app -PackageName dev.dsh.mobile `
+    -MinSdk 29 -TargetSdk 35 -Label 'DeepSeek Harness' -VersionName '0.1.0' -VersionCode 1
+# 之后若要跑模拟器，重新 stage：
+. tools\m1\stage-runtime.ps1 -Abi x86_64
+```
+
+GitHub 侧计算的资产摘要与本地 `SHA256SUMS.txt` 一致：
+`facf34888ec75993a527bb388f6668e7158266b23ba39eab1850a0b4e5298ec6`
 
 ---
 
