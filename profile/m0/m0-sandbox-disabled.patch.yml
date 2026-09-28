@@ -1,0 +1,25 @@
+# M0 test overlay: the single change Android mandates.
+#
+# ON ANDROID THIS IS THE ONLY DISABLE THE PLATFORM REQUIRES.
+#
+# Why: `dsh-sandbox-local` drives Landlock through
+# @deepseek-ai/node-addon-system, which ships prebuilds for
+# darwin-{arm64,x64}, linux-{x64,arm64}-gnu and win32-msvc only — there is no
+# android-arm64 build — and Landlock is a Linux LSM that Android kernels do not
+# expose to apps at all. Everything else in the shipped web profile is portable.
+#
+# This is also the smallest patch that keeps the dependency graph satisfiable:
+# the shell providers (`bash-sandbox`, `pwsh-sandbox`) inject `sandbox`, so
+# disabling `sandbox` alone is expected to cascade into
+# `@deepseek-ai/dsh-permission-presets: pending (waiting for service: shell)`.
+# Establishing whether that cascade is fatal on Android is exactly what the
+# `dsh-mobile/shell-android` replacement exists to solve, and what the M0 report
+# records as the port's one open dependency question.
+
+- id: sandbox
+  disabled: true
+
+- id: sandbox-policy
+  config:
+    mode: danger-full-access
+    workspaceRoot: !!js process.cwd()

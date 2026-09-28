@@ -1,0 +1,30 @@
+# Normalize line endings in the repository, not in the working tree.
+#
+# This matters beyond tidiness: tools/device/*.sh are pushed to a device and run
+# by Android's /system/bin/sh. A CRLF shebang line makes the interpreter name end
+# in \r, so the script fails with a confusing "not found" instead of running.
+# Git's default `core.autocrlf=true` on Windows would rewrite them on checkout.
+* text=auto eol=lf
+
+# Windows scripts and Java are read by tools that tolerate either, but pinning LF
+# keeps every checkout byte-identical.
+*.ps1   text eol=lf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.java  text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.xml   text eol=lf
+
+# Binary payloads must never be line-ending converted.
+*.png   binary
+*.jpg   binary
+*.so    binary
+*.apk   binary
+*.deb   binary
+*.zip   binary
+*.tgz   binary
+*.keystore binary

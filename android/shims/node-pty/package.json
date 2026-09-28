@@ -1,0 +1,8 @@
+{
+  "name": "node-pty",
+  "version": "1.0.0-android-shim",
+  "description": "Android stand-in for node-pty: child_process-backed, no pty semantics. See index.js for why the engine needs this to boot at all.",
+  "main": "index.js",
+  "private": true,
+  "license": "MIT"
+}

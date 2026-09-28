@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# Build toolchain (17 GB: JDK, Android SDK/NDK, Gradle, emulator, system image)
+#
+# Recreated by the fetch/install scripts, never committed. Use
+#   . tools/android-env.ps1
+# after installing it, or point ANDROID_HOME at an SDK you already have.
+# ---------------------------------------------------------------------------
+.toolchain/
+
+# ---------------------------------------------------------------------------
+# Generated runtime and engine payloads (hundreds of MB, all reproducible)
+#
+# assets/engine      the DSH dependency tree, produced by tools/m1/stage-engine.ps1
+# jniLibs/<abi>      the Termux Node runtime, produced by tools/m1/stage-runtime.ps1
+#
+# These are build inputs, not sources: committing them would add ~375 MB and
+# 25k files that the scripts regenerate from pinned upstream versions.
+# ---------------------------------------------------------------------------
+android/app/src/main/assets/engine/
+android/app/src/main/jniLibs/*/
+!android/app/src/main/jniLibs/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+android/app/build/
+android/*/build/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# AVD and SDK user state (emulator snapshots, adb keys, licence records)
+.toolchain/android-user-home/avd/*.avd/
+*.img
+*.qcow2
+
+# ---------------------------------------------------------------------------
+# Scratch and diagnostics
+#
+# The M0 verification workspaces and the emulator screenshots are working state.
+# Device screenshots worth keeping belong in docs/images/.
+# ---------------------------------------------------------------------------
+.m0/
+.m1/
+.smoke/
+*.log
+engine.pid
+
+# Keep the generated-config dumps out of the history: they are large, noisy,
+# and trivially regenerated with `dsh --profile web --dump-config`.
+*.dump
+
+# ---------------------------------------------------------------------------
+# Secrets and local state
+#
+# A DSH home may contain an API key in .credentials.yaml. Never commit one.
+# ---------------------------------------------------------------------------
+.credentials.yaml
+.env
+*.keystore
+*.jks
+dsh-home/
+
+# ---------------------------------------------------------------------------
+# OS / editor
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.vscode/
+.idea/

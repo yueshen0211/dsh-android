@@ -1,0 +1,16 @@
+{
+  "name": "@dsh-mobile/attachment-android",
+  "version": "0.1.0",
+  "description": "Android attachment provider: content-addressed verbatim file and image storage without sharp. See index.js for the capability statement.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-attachment": "0.1.5-rc.3"
+  }
+}

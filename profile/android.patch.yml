@@ -1,0 +1,157 @@
+# Android overlay for the `web` profile — the DSH mobile port's platform layer.
+#
+# Form: a top-level YAML ARRAY of loader patch entries (id-targeted overrides +
+# `insert` lists). `!!js` expressions are evaluated by the loader. A patch
+# replaces the targeted row's whole `config`, so every row whose config matters
+# restates it in full.
+#
+# Design rule: read-only with respect to upstream packages. All platform
+# difference lives here, which is what lets the port track upstream releases.
+#
+# ── What M0 established (see .m0/M0-REPORT.md), and how it changed this file ──
+#
+# The first draft of this overlay DISABLED the Landlock sandbox provider
+# (`- id: sandbox / disabled: true`), on the reasoning that Android has neither
+# Landlock nor an android-arm64 prebuild of @deepseek-ai/node-addon-system.
+# That was WRONG, and it is fatal rather than merely degraded:
+#
+#   Error: dsh: plugin tree failed to load: dsh: 2 entries did not activate
+#   @deepseek-ai/dsh-pwsh-sandbox: pending (waiting for service: sandbox)
+#   @deepseek-ai/dsh-permission-presets: pending (waiting for service: shell)
+#
+# The shell providers (`dsh-bash-sandbox`, `dsh-pwsh-sandbox`) inject `sandbox`,
+# and `dsh-permission-presets` injects `shell`. Disabling the sandbox therefore
+# removes the only `ctx.shell` provider, and the boot gate refuses to start the
+# engine at all.
+#
+# The overlay below instead KEEPS every provider mounted and pins the permission
+# policy pair to `danger-full-access` + `never`. This was verified end to end on
+# the dev host: the engine boots, and the token→cookie→authenticated-index flow
+# completes (303 / HttpOnly+SameSite=Strict / 401 without cookie / 200 with).
+#
+# Open question for the device milestone: `dsh-sandbox-local` is still mounted,
+# so on Android it must at least construct and report `shell.sandboxMode`.
+# `danger-full-access` is the "no confinement" rung, so it plausibly never
+# reaches the Landlock/bwrap runner probe — but that is inferred, not observed,
+# and it is the one thing this overlay cannot prove without an arm64 device.
+
+# ── 1. Permission policy pair ────────────────────────────────────────────────
+# Both rows must be pinned TOGETHER. Overriding only `sandbox-policy` makes
+# `dsh-permission-presets` refuse to construct:
+#
+#   permission: composed sandbox and approval defaults match no preset;
+#   configure defaultPreset explicitly
+#
+# It validates that the composed sandbox+approval default pair names one of its
+# presets. Pinning the pair reproduces exactly what
+# `DSH_PERMISSION_MODE=danger-full-access` already does on the stock
+# composition, so this restates upstream policy rather than inventing one.
+#
+# Guarded on `process.platform === 'android'` so the same file is safe to apply
+# on a desktop dev host, where upstream's own platform split should win.
+- id: sandbox-policy
+  config:
+    mode: !!js >-
+      process.platform === 'android' ? 'danger-full-access'
+      : (process.env.DSH_PERMISSION_MODE ?? 'workspace-write')
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  config:
+    # Block scalars, not inline strings: YAML reads `? ` as a mapping-key
+    # indicator, so a single-line ternary breaks the parse.
+    policy: !!js >-
+      process.platform === 'android' ? 'never'
+      : ((process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask')
+
+# ── 2. Image attachments: sharp has no Android build ─────────────────────────
+# `dsh-attachment-local` imports sharp, and sharp's native binaries cover
+# linux/darwin/win32 only -- there is no android-arm64 variant. sharp fails at
+# import with a message that lists its own remedies:
+#
+#   Could not load the "sharp" module using the android-arm64 runtime
+#   - Manually install libvips >= 8.18.7
+#   - Add WebAssembly-based dependencies: npm install sharp @img/sharp-wasm32
+#
+# Because the plugin tree loads every row eagerly, that import failure aborts the
+# whole boot rather than degrading the attachment feature.
+#
+# Simply disabling the row does NOT work, and the failure is instructive: the
+# `attachments` service is consumed, not optional. Disabling it cascades --
+#
+#   @deepseek-ai/dsh-api-session-controller: pending (waiting for services: attachments, fileUploads)
+#   @deepseek-ai/dsh-client-file-upload: pending (waiting for service: attachments)
+#   @deepseek-ai/dsh-client-ui-deliverables: pending (waiting for service: sessionController)
+#
+# So the row is REPLACED by a provider with no native dependency. Note HOW: an
+# earlier version of this file tried to swap the package by patching the row's
+# `name`, which silently does nothing. The loader only accepts `config` and
+# `disabled` on an id-targeted patch and refuses a name change:
+#
+#   patch: name mismatch for "attachment-local"
+#     (expected "@deepseek-ai/dsh-attachment-local", got "@dsh-mobile/attachment-android"), skipping
+#
+# The patch is dropped with a warning, the original sharp-backed provider still
+# loads, and the engine fails to boot. Hence: disable the upstream row, then
+# insert the replacement as its own row.
+#
+# @dsh-mobile/attachment-android stores files and images verbatim by content
+# digest and validates image admission from container headers; it does not
+# transcode. See android/plugins/attachment-android/index.js for the full
+# capability statement.
+- id: attachment-local
+  disabled: !!js process.platform === 'android'
+
+- insert:
+    - id: attachment-android
+      name: '@dsh-mobile/attachment-android'
+
+# ── 3. HMR: desktop-only dev machinery ───────────────────────────────────────
+# `cordis-plugin-hmr` reloads client plugin bundles when `pnpm run dev:web`
+# rebuilds them. Nothing rebuilds anything on a phone, so it has no purpose
+# here -- and it is actively harmful, because the engine instantiates it and
+# cordis requires `--expose-internals` for that service:
+#
+#   failed to apply loader entry ... (cordis-plugin-hmr):
+#   --expose-internals is required for HMR service
+#
+# The shell therefore also passes --expose-internals (see EngineRuntime), since
+# the row is instantiated regardless of this disable; disabling it here removes
+# the pointless work, and the flag keeps the boot from aborting if a future
+# composition reintroduces the service by another route.
+- id: hmr
+  disabled: !!js process.platform === 'android'
+
+# ── 4. Desktop integrations with no mobile equivalent ────────────────────────
+# Directory picker: `dsh-host-directory-picker-auto` resolves a dual-face picker
+# against bind host and SSH state; its `-native` face goes through
+# @deepseek-ai/dsh-native-command (desktop OS dialogs). On a phone the workspace
+# is fixed to app-private storage and file exchange happens through the shell's
+# import/export Intents, so M1 pins the `-browse` face instead. Left mounted
+# until then so the tree stays closer to upstream.
+#
+# `open-in-app` resolves host applications from the desktop registry; on Android
+# "open with another app" is an Intent the native shell owns.
+- id: directory-picker
+  disabled: !!js process.platform === 'android'
+
+- id: open-in-app
+  disabled: !!js process.platform === 'android'
+
+# ── 5. Rows deliberately NOT touched ─────────────────────────────────────────
+# - `tool-bash` / `tool-pwsh` / `bash-sandbox` / `pwsh-sandbox`: the base layer
+#   already splits these on `process.platform`, and on Android that resolves to
+#   bash-on / pwsh-off, which is the correct mobile outcome. Overriding them
+#   here would desync this file from upstream's platform policy for no gain.
+# - `subprocess` (`dsh-subprocess-local`): statically imports node-pty. It is
+#   mounted by the web bundle, so an android-arm64 node-pty (or a replacement
+#   provider) is a device-milestone question, not a reason to break the graph.
+# - `session-persistence-jsonl`: depends on node-addon-system for POSIX flock.
+#   Left mounted to measure the real failure, if any, on device.
+# - `attachment-local` (sharp): no android-arm64 prebuild; sharp falls back to
+#   WASM on Termux-like targets. M3 replaces the sharp path with native
+#   ImageDecoder transcoding in the shell.
+# - `shell-env`: keeps publishing DSH_WEB_URL / DSH_WEB_MODE, which the mobile
+#   shell still wants.
+# - `session-query-sqlite`: the web bundle already sets `openAt: never`, so the
+#   node:sqlite import stays deferred and only full-text search triggers it.

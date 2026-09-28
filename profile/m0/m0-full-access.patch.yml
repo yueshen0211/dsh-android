@@ -1,0 +1,38 @@
+# M0 test overlay: keep the sandbox provider, ask it for full access.
+#
+# Hypothesis under test: `dsh-sandbox-local` may not need Landlock at all when
+# the session runs in `danger-full-access` — Landlock is the enforcement rung for
+# `read-only` / `workspace-write`, and a "no confinement" mode plausibly
+# short-circuits before the runner probe. If so, Android can keep the whole
+# dependency graph intact (shell providers stay activated, permission presets
+# keep resolving) and only the enforcement rung is unavailable.
+#
+# The environment variable is the seam the base layer's own condition reads:
+#   mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+# and with danger-full-access the approval policy likewise resolves to 'never'.
+#
+# BOTH rows must be pinned together. Overriding only `sandbox-policy` makes
+# `dsh-permission-presets` refuse to construct, because it validates that the
+# composed sandbox+approval default pair names one of its presets:
+#
+#   permission: composed sandbox and approval defaults match no preset;
+#   configure defaultPreset explicitly
+#
+# Pinning the pair reproduces exactly what DSH_PERMISSION_MODE=danger-full-access
+# does on the stock composition, so this stays a restatement of upstream policy
+# rather than a new policy.
+
+- id: sandbox-policy
+  config:
+    mode: danger-full-access
+    workspaceRoot: !!js process.cwd()
+
+- id: approval
+  config:
+    policy: never
+
+- id: directory-picker
+  disabled: true
+
+- id: open-in-app
+  disabled: true

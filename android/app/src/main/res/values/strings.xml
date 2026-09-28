@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DeepSeek Harness</string>
+    <string name="engine_channel_name">Engine</string>
+    <string name="engine_notification_title">DSH engine running</string>
+    <string name="engine_notification_text">Your sessions stay available while the app is in the background.</string>
+    <string name="boot_title">Starting the DSH engine</string>
+    <string name="boot_preparing">Preparing the runtime (first launch only)…</string>
+    <string name="boot_starting">Starting the engine…</string>
+    <string name="boot_failed_title">The engine could not start</string>
+    <string name="retry">Retry</string>
+    <string name="copy_diagnostics">Copy diagnostics</string>
+</resources>

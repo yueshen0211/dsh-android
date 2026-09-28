@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DSH mobile shell.
+
+  Configuration notes (kept free of double hyphens: XML comments may not contain
+  them, and the rationale is easier to read outside the markup anyway):
+
+  * extractNativeLibs="true" keeps the .so files on disk instead of mapping them
+    from the APK. The Android Node runtime is launched as an executable, which
+    requires an executable path, and only the extracted native library directory
+    qualifies: app data directories are mounted noexec on Android 10 and later.
+
+  * Cleartext is permitted but scoped to the loopback engine by
+    network_security_config, which whitelists 127.0.0.1 only. The engine binds
+    loopback exclusively (dsh refuses a wildcard host outright), so the WebView
+    never needs cleartext for anything off device.
+
+  * The engine runs in its own process (":engine") so a runtime crash cannot take
+    the UI down with it, and so the long lived service can be observed and
+    restarted independently.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:extractNativeLibs="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false"
+        android:hardwareAccelerated="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".EngineService"
+            android:exported="false"
+            android:process=":engine"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs the on-device DSH agent runtime so sessions keep running while the app is in the background." />
+        </service>
+
+    </application>
+
+</manifest>

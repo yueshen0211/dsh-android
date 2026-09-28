@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Neutral dark surface: the boot screen shows before the web UI paints, so
+         it should not flash a bright frame at the user. -->
+    <color name="boot_background">#FF101418</color>
+    <color name="boot_text">#FFE6E8EB</color>
+    <color name="boot_muted">#FF9AA4B2</color>
+    <color name="boot_error">#FFFF8A80</color>
+    <color name="launcher_background">#FF0B1020</color>
+</resources>
