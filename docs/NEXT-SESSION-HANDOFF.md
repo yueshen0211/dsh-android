@@ -2,15 +2,83 @@
 
 > 用途：固化进度，便于随时中断/恢复。
 
+---
+
+# ⏸ 从这里继续（RESUME HERE）
+
+**当前唯一未完成项：arm64 真机验证。**
+
+真机上 app **卡在启动页**，但手机在本次会话中不可用（`adb devices` 只有模拟器），
+所以**还没拿到真机的失败日志**。必须在拿到日志之后才能继续，不要盲改代码 ——
+前两轮"盲改"的代价已经证明过了（补丁 name、跨进程 static 都是靠日志才定位的）。
+
+## 回来后的第一步
+
+手机插上 USB、允许 USB 调试，然后：
+
+```powershell
+. D:\Work\DSHapk\tools\diagnose-device.ps1
+```
+
+一条命令就能收齐定位所需的一切（设备信息、安装版本、进程与界面状态、UI 轮询的 state 文件、
+引擎失败日志、引擎 logcat、WebView 控制台与版本、解包后的目录结构），
+并把报告文件路径打印出来。**把那个文件发回来即可定位。**
+
+> 若只想手工看一眼，最关键的一条：
+> `adb shell run-as dev.dsh.mobile cat files/engine-boot-failure.log`
+
+## 已经排除的可能（不必重查）
+
+静态检查全部通过，所以问题只在运行时：
+
+| 检查 | 结果 |
+|---|---|
+| Releases 里的 APK 是否含全部修复 | ✅ 含 `publishState` / `engine-state.txt` / WebView polyfill / `ensurePluginsInProfile` |
+| manifest 关键属性 | ✅ `extractNativeLibs=true`、`debuggable=true`、`:engine` 独立进程、网络安全配置在位 |
+| 资产关键文件 | ✅ 引擎入口 / patch / 插件 / koffi arm64 绑定 / ENGINE-VERSION 全在 |
+| arm64 `.so` 依赖闭包 | ✅ **0 缺失** |
+| koffi 绑定路径 | ✅ 符合运行时查找路径 `@koromix/koffi-android-arm64/android_arm64/koffi.node` |
+
+## 备选路径：arm64 模拟器
+
+手机若迟迟不方便，可以复现 arm64 代码路径而不需要真机 —— 这也是**唯一**能在没有手机时
+验证 arm64 的办法。系统镜像（Android 14 / arm64-v8a）已在下载。
+
+**注意预期**：x86_64 主机上跑 arm64 镜像只能靠 QEMU 指令翻译，首次解包 + 启动可能要
+**20–40 分钟**（x86_64 镜像只要 10 秒）。慢，但有效。
+
+## 若修复后要发新版本
+
+```powershell
+. D:\Work\DSHapk\tools\android-env.ps1
+# 精简为 arm64-only（真机不需要 x86_64 那 93 MB）
+Remove-Item android\app\src\main\jniLibs\x86_64 -Recurse -Force
+& .\tools\build-apk-cli.ps1 -ProjectDir android -Module app -PackageName dev.dsh.mobile `
+    -MinSdk 29 -TargetSdk 35 -Label 'DeepSeek Harness' -VersionName '0.1.0' -VersionCode 1
+. .\tools\gh-env.ps1
+& gh release upload v0.1.0-m1 <新APK> --repo yueshen0211/dsh-android --clobber
+# 恢复 x86_64 以便继续用模拟器
+. tools\m1\stage-runtime.ps1 -Abi x86_64
+```
+
+### 关于「双 ABI 安装包」
+
+**现在磁盘上没有双 ABI 的 APK** —— 做 arm64 精简版时 `jniLibs\x86_64` 被删后重新构建，
+把 232.8 MB 那个覆盖了。要重建只需先 `. tools\m1\stage-runtime.ps1 -Abi x86_64` 再构建，
+产物约 232.8 MB（两套运行时都在，同一个包真机与模拟器都能装）。
+
+---
+
 | 项 | 状态 |
 |---|---|
 | 日期 | 2026-09-28 |
-| 当前里程碑 | **M1 完成 —— 完整 DSH GUI 在模拟器里跑起来了（端到端验证通过）** |
-| 仓库 | **https://github.com/yueshen0211/dsh-android**（public） |
+| 当前里程碑 | **M1 完成 —— 完整 DSH GUI 在 x86_64 模拟器上端到端验证通过** |
+| 仓库 | **https://github.com/yueshen0211/dsh-android**（public，4 个提交） |
 | 发布 | **https://github.com/yueshen0211/dsh-android/releases/tag/v0.1.0-m1**（pre-release） |
-| APK | Releases 里是 **arm64-only 140.2 MB**；本地 `android\app\build\cli-debug\dsh-debug.apk` 是双 ABI 232.8 MB |
-| 真机 | `ZS22224CG6`（Android 16 / arm64-v8a）—— **需重装新 APK**（旧版有下面的跨进程 bug） |
-| 模拟器 | `dsh-test`（Android 14 / **x86_64**），WHPX 加速，带窗口 |
+| APK | Releases 里是 **arm64-only 140.2 MB**；本地当前构建也是 arm64-only（双 ABI 版已被覆盖，可重建） |
+| 真机 | `ZS22224CG6`（Android 16 / arm64-v8a）—— **卡在启动页，待取日志** |
+| 模拟器 | `dsh-test`（Android 14 / **x86_64**），WHPX 加速，带窗口 —— 已验证通过 |
+| arm64 镜像 | `system-images;android-34;google_apis;arm64-v8a`，下载中/已装 |
 
 ---
 
